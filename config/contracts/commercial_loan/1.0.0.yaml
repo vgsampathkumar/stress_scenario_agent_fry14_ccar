@@ -1,0 +1,62 @@
+# Commercial loan data contract v1.0.0 (requirement 2.2).
+#
+# `expression` under business_rules is documentation only — it is never
+# evaluated. The actual rule logic lives in
+# src/fry14_engine/contracts/business_rules.py:BUSINESS_RULE_REGISTRY,
+# keyed by rule_id. See that module's docstring for why.
+
+contract_id: commercial_loan
+version: "1.0.0"
+effective_date: "2026-01-01"
+
+fields:
+  - field_name: loan_id
+    data_type: STRING
+    nullable: false
+
+  - field_name: internal_credit_risk_grade
+    data_type: INT
+    nullable: false
+    allowed_range:
+      min: 1
+      max: 10
+    constraint_reason_code: INVALID_CREDIT_GRADE
+
+  - field_name: credit_score
+    data_type: INT
+    nullable: false
+    null_reason_code: MISSING_CREDIT_SCORE
+
+  - field_name: outstanding_balance
+    data_type: DECIMAL
+    nullable: false
+    allowed_range:
+      min: 0
+    constraint_reason_code: NEGATIVE_BALANCE
+
+  - field_name: asset_class
+    data_type: STRING
+    nullable: false
+    allowed_values: ["CRE", "C&I"]
+    constraint_reason_code: UNKNOWN_ASSET_CLASS
+
+  - field_name: borrower_tax_id
+    data_type: STRING
+    nullable: true
+    pii: true
+
+  - field_name: borrower_legal_name
+    data_type: STRING
+    nullable: true
+    pii: true
+
+  - field_name: borrower_address
+    data_type: STRING
+    nullable: true
+    pii: true
+
+business_rules:
+  - rule_id: MATURITY_BEFORE_ORIGINATION
+    description: "maturity_date must not precede origination_date when both are present"
+    expression: "maturity_date >= origination_date"
+    severity: REJECT

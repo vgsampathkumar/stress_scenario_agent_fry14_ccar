@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Data / local stores (synthetic runtime data, not source)
+data/landing/*
+data/quarantine/*
+data/governed/*
+data/reference/*
+!data/**/.gitkeep
+*.duckdb
+*.duckdb.wal
+
+# Secrets
+.env
+*.key
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# MS Office transient lock files
+~$*.doc*
+~$*.xls*
+~$*.ppt*
+
+# Local tool state (not project source)
+.claude/

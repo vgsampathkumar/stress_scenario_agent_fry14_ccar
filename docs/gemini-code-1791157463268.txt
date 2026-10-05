@@ -1,0 +1,15 @@
+flowchart TD
+    classDef human fill:#ffebcd,stroke:#333,stroke-width:2px;
+    classDef process fill:#e1f5fe,stroke:#333,stroke-width:2px;
+    classDef storage fill:#f3e5f5,stroke:#333,stroke-width:2px;
+
+    User((Business User)):::human -->|Interacts with| BI[Fixed Dashboards & UI]:::process
+    User -->|Writes Manual SQL| DB[(Data Warehouse)]:::storage
+    
+    Eng((Data Engineer)):::human -->|Manual Triage & Scripting| Quar[(Quarantine Store)]:::storage
+    
+    Ingest[Data Ingestion]:::process --> ETL[Deterministic Pipeline / Orchestrator]:::process
+    
+    ETL -->|Data Quality Failure| Quar
+    ETL -->|Data Quality Pass| DB
+    DB --> BI

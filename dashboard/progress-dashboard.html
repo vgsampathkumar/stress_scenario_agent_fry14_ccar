@@ -1,0 +1,755 @@
+<title>Build Progress — FR Y-14 Agentic Engine</title>
+<style>
+  :root {
+    --bg: #0b1420;
+    --surface: #121d2e;
+    --surface-raised: #17253a;
+    --surface-sunken: #0e1726;
+    --border-solid: #253a58;
+    --rule: #1d2d45;
+    --text: #e8edf5;
+    --text-muted: #8798b3;
+    --text-faint: #5b6c85;
+    --accent: #5b8ab8;
+    --accent-soft: rgba(91, 138, 184, 0.14);
+    --accent-strong: #8fb8de;
+    --good: #4f9d69;
+    --good-soft: rgba(79, 157, 105, 0.14);
+    --warn: #d1983d;
+    --warn-soft: rgba(209, 152, 61, 0.16);
+    --critical: #c75d5d;
+    --critical-soft: rgba(199, 93, 93, 0.16);
+    --pending: #4a5872;
+    --pending-soft: rgba(74, 88, 114, 0.18);
+
+    --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f1f3f7;
+      --surface: #ffffff;
+      --surface-raised: #f7f9fc;
+      --surface-sunken: #eceff4;
+      --border-solid: #dbe1ea;
+      --rule: #e1e6ee;
+      --text: #182233;
+      --text-muted: #57667c;
+      --text-faint: #8695ac;
+      --accent: #3d6c90;
+      --accent-soft: rgba(61, 108, 144, 0.09);
+      --accent-strong: #2c5370;
+      --good: #2f7d4c;
+      --good-soft: rgba(47, 125, 76, 0.1);
+      --warn: #a66c1d;
+      --warn-soft: rgba(166, 108, 29, 0.12);
+      --critical: #a33f3f;
+      --critical-soft: rgba(163, 63, 63, 0.1);
+      --pending: #8695ac;
+      --pending-soft: rgba(134, 149, 172, 0.14);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #0b1420;
+    --surface: #121d2e;
+    --surface-raised: #17253a;
+    --surface-sunken: #0e1726;
+    --border-solid: #253a58;
+    --rule: #1d2d45;
+    --text: #e8edf5;
+    --text-muted: #8798b3;
+    --text-faint: #5b6c85;
+    --accent: #5b8ab8;
+    --accent-soft: rgba(91, 138, 184, 0.14);
+    --accent-strong: #8fb8de;
+    --good: #4f9d69;
+    --good-soft: rgba(79, 157, 105, 0.14);
+    --warn: #d1983d;
+    --warn-soft: rgba(209, 152, 61, 0.16);
+    --critical: #c75d5d;
+    --critical-soft: rgba(199, 93, 93, 0.16);
+    --pending: #4a5872;
+    --pending-soft: rgba(74, 88, 114, 0.18);
+  }
+
+  :root[data-theme="light"] {
+    --bg: #f1f3f7;
+    --surface: #ffffff;
+    --surface-raised: #f7f9fc;
+    --surface-sunken: #eceff4;
+    --border-solid: #dbe1ea;
+    --rule: #e1e6ee;
+    --text: #182233;
+    --text-muted: #57667c;
+    --text-faint: #8695ac;
+    --accent: #3d6c90;
+    --accent-soft: rgba(61, 108, 144, 0.09);
+    --accent-strong: #2c5370;
+    --good: #2f7d4c;
+    --good-soft: rgba(47, 125, 76, 0.1);
+    --warn: #a66c1d;
+    --warn-soft: rgba(166, 108, 29, 0.12);
+    --critical: #a33f3f;
+    --critical-soft: rgba(163, 63, 63, 0.1);
+    --pending: #8695ac;
+    --pending-soft: rgba(134, 149, 172, 0.14);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 2.5rem 1.75rem 4rem;
+    display: flex;
+    flex-direction: column;
+    gap: 2.25rem;
+  }
+
+  /* ---------- Masthead ---------- */
+
+  .masthead {
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+  }
+
+  .masthead-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+  }
+
+  .eyebrow {
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  h1 {
+    font-family: var(--font-display);
+    font-weight: 500;
+    font-size: 2rem;
+    margin: 0.3rem 0 0;
+    text-wrap: balance;
+  }
+
+  .masthead-meta {
+    text-align: right;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    line-height: 1.7;
+  }
+
+  .masthead-meta .label {
+    color: var(--text-faint);
+    font-family: var(--font-body);
+    margin-right: 0.4em;
+  }
+
+  .progress-track {
+    position: relative;
+    height: 8px;
+    border-radius: 5px;
+    background: var(--surface-sunken);
+    border: 1px solid var(--border-solid);
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    position: absolute;
+    inset: 0;
+    width: var(--pct, 0%);
+    background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+    border-radius: 5px 0 0 5px;
+    transition: width 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .progress-caption {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .progress-fill { transition: none; }
+  }
+
+  /* ---------- Section headings ---------- */
+
+  .section-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .section-title {
+    font-family: var(--font-display);
+    font-size: 1.25rem;
+    font-weight: 500;
+  }
+
+  .section-sub {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    max-width: 60ch;
+  }
+
+  /* ---------- Phase timeline ---------- */
+
+  .timeline {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border-solid);
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--surface);
+  }
+
+  .phase-row {
+    display: grid;
+    grid-template-columns: 3.5rem 1fr auto;
+    gap: 1rem;
+    align-items: center;
+    padding: 0.8rem 1.1rem;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .phase-row:last-child { border-bottom: none; }
+
+  .phase-row[data-status="done"] { background: color-mix(in srgb, var(--good-soft) 40%, transparent); }
+  .phase-row[data-status="next"] { background: var(--accent-soft); }
+
+  .phase-num {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--text-faint);
+    text-align: center;
+  }
+
+  .phase-row[data-status="done"] .phase-num { color: var(--good); }
+  .phase-row[data-status="next"] .phase-num { color: var(--accent-strong); font-weight: 700; }
+
+  .phase-body { min-width: 0; }
+
+  .phase-title {
+    font-weight: 600;
+    font-size: 0.92rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .phase-detail {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-top: 0.2rem;
+  }
+
+  .status-pill {
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    padding: 0.15rem 0.55rem;
+    border-radius: 20px;
+    white-space: nowrap;
+  }
+
+  .status-pill.done { background: var(--good-soft); color: var(--good); }
+  .status-pill.next { background: var(--accent-soft); color: var(--accent-strong); }
+  .status-pill.pending { background: var(--pending-soft); color: var(--text-faint); }
+
+  .tag-pill {
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    padding: 0.1rem 0.45rem;
+    border-radius: 3px;
+    background: var(--surface-raised);
+    color: var(--text-faint);
+    border: 1px solid var(--border-solid);
+  }
+
+  /* ---------- KPI strip ---------- */
+
+  .kpi-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .kpi {
+    background: var(--surface);
+    padding: 1.1rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+
+  .kpi-value {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 1.65rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+
+  .kpi-value.good { color: var(--good); }
+  .kpi-value.warn { color: var(--warn); }
+
+  .kpi-label {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  /* ---------- Run detail grid ---------- */
+
+  .run-grid {
+    display: grid;
+    grid-template-columns: 1.1fr 1fr;
+    gap: 1rem;
+  }
+
+  @media (max-width: 820px) {
+    .run-grid { grid-template-columns: 1fr; }
+  }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border-solid);
+    border-radius: 6px;
+    padding: 1.1rem 1.25rem 1.25rem;
+  }
+
+  .panel-title {
+    font-weight: 600;
+    font-size: 0.88rem;
+    margin-bottom: 0.9rem;
+  }
+
+  /* reason code bars */
+
+  .bar-row {
+    display: grid;
+    grid-template-columns: 11rem 1fr 2.5rem;
+    align-items: center;
+    gap: 0.7rem;
+    margin-bottom: 0.55rem;
+    font-size: 0.78rem;
+  }
+
+  .bar-row:last-child { margin-bottom: 0; }
+
+  .bar-label {
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .bar-track {
+    height: 9px;
+    border-radius: 5px;
+    background: var(--surface-sunken);
+    overflow: hidden;
+    border: 1px solid var(--rule);
+  }
+
+  .bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--warn), var(--critical));
+    border-radius: 5px;
+    width: 0%;
+    transition: width 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .bar-value {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .bar-fill { transition: none; }
+  }
+
+  /* quarantine table */
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border-solid);
+    border-radius: 5px;
+  }
+
+  table { border-collapse: collapse; width: 100%; min-width: 480px; }
+
+  thead th {
+    text-align: left;
+    font-size: 0.66rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    font-weight: 600;
+    padding: 0.5rem 0.75rem;
+    background: var(--surface-raised);
+    border-bottom: 1px solid var(--border-solid);
+    white-space: nowrap;
+  }
+
+  tbody td {
+    padding: 0.45rem 0.75rem;
+    border-bottom: 1px solid var(--rule);
+    font-size: 0.8rem;
+    white-space: nowrap;
+  }
+
+  tbody tr:last-child td { border-bottom: none; }
+
+  .mono { font-family: var(--font-mono); }
+  .muted { color: var(--text-muted); }
+
+  .reason-chip {
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    background: var(--warn-soft);
+    color: var(--warn);
+  }
+
+  /* ---------- Component map ---------- */
+
+  .component-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 0.6rem;
+  }
+
+  .component-card {
+    background: var(--surface);
+    border: 1px solid var(--border-solid);
+    border-radius: 5px;
+    padding: 0.7rem 0.85rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+
+  .component-card[data-status="done"] { border-left: 3px solid var(--good); }
+  .component-card[data-status="pending"] { border-left: 3px solid var(--pending); opacity: 0.72; }
+
+  .component-id {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    color: var(--text-faint);
+  }
+
+  .component-name {
+    font-size: 0.82rem;
+    font-weight: 600;
+  }
+
+  .component-zone {
+    font-size: 0.68rem;
+    color: var(--text-muted);
+  }
+
+  .zone-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    margin-bottom: 1rem;
+  }
+
+  .zone-group:last-child { margin-bottom: 0; }
+
+  .zone-label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-faint);
+  }
+
+  footer {
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--rule);
+    font-size: 0.8rem;
+    color: var(--text-faint);
+  }
+
+  footer code {
+    font-family: var(--font-mono);
+    background: var(--surface-raised);
+    padding: 0.1rem 0.35rem;
+    border-radius: 3px;
+    color: var(--text-muted);
+  }
+</style>
+
+<div class="page">
+
+  <div class="masthead">
+    <div class="masthead-top">
+      <div>
+        <span class="eyebrow">FR Y-14 / CCAR &middot; Governed Agentic Data Product Orchestrator</span>
+        <h1>Build progress</h1>
+      </div>
+      <div class="masthead-meta">
+        <div><span class="label">spec</span>v2.0 (agentic)</div>
+        <div><span class="label">plan</span>12 phases</div>
+        <div><span class="label">updated</span><span id="generated-at"></span></div>
+      </div>
+    </div>
+    <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+    <div class="progress-caption">
+      <span id="progress-caption-left"></span>
+      <span id="progress-caption-right"></span>
+    </div>
+  </div>
+
+  <section>
+    <div class="section-head">
+      <div>
+        <div class="section-title">Phase roadmap</div>
+        <div class="section-sub">Each phase builds on the last — the order reflects real dependencies (e.g. the Stress Engine in Phase 8 needs the Risk Engine from Phase 4), not just a checklist.</div>
+      </div>
+    </div>
+    <div class="timeline" id="timeline"></div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <div>
+        <div class="section-title">Latest pipeline run</div>
+        <div class="section-sub">Real output from the engine as built so far — synthetic loans ingested, then validated against the active data contract.</div>
+      </div>
+      <span class="tag-pill" id="contract-tag"></span>
+    </div>
+    <div class="kpi-strip" id="kpi-strip" style="margin-bottom: 1rem;"></div>
+    <div class="run-grid">
+      <div class="panel">
+        <div class="panel-title">Quarantine reason codes</div>
+        <div id="reason-bars"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">Ingestion channels</div>
+        <div id="channel-summary"></div>
+      </div>
+    </div>
+    <div class="panel" style="margin-top: 1rem;">
+      <div class="panel-title">Quarantined records (sample)</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Loan ID</th><th>Reason codes</th><th>Remediation status</th></tr>
+          </thead>
+          <tbody id="quarantine-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <div>
+        <div class="section-title">Component map</div>
+        <div class="section-sub">C1&ndash;C16 are the deterministic engine; C17&ndash;C31 are the agentic layer added in v2.0. Filled left border = implemented and tested.</div>
+      </div>
+    </div>
+    <div id="component-zones"></div>
+  </section>
+
+  <footer>
+    This page is generated from real runs of <code>fry14_engine</code> — not a mockup. Re-run
+    <code>dashboard/generate_run.py</code>-style scripts and redeploy to refresh it as each phase lands.
+    See <code>03-implementation-plan.md</code> for the full phase definitions and
+    <code>02-design-document.md</code> §1 for the C1&ndash;C31 component inventory.
+  </footer>
+
+</div>
+
+<script id="run-data" type="application/json">
+{"generated_at": "2026-10-04T23:30:48.581330+00:00", "contract": {"contract_id": "commercial_loan", "version": "1.0.0", "field_count": 8, "pii_field_count": 3, "business_rule_count": 1}, "ingestion": {"batch": {"pipeline_run_id": "678d2843-d91c-463e-bcaa-fb26ef932348", "records_landed": 60, "parse_errors": 0, "source_system": "CORE_LOAN_SYSTEM"}, "event": {"pipeline_run_id": "8e960716-8dd5-4cbf-aba0-f457b7aaa08f", "records_landed": 20, "parse_errors": 0, "source_system": "CREDIT_PERFORMANCE_FEED"}}, "validation": {"pipeline_run_id": "3b330f40-4275-451a-82dd-d614179ab596", "total_count": 80, "valid_count": 65, "quarantined_count": 15, "dq_pass_rate": 0.8125, "reason_code_counts": {"NEGATIVE_BALANCE": 4, "MISSING_CREDIT_SCORE": 4, "INVALID_CREDIT_GRADE": 4, "NULL_MANDATORY_FIELD": 3}}, "quarantine_sample": [{"loan_id": "LN-00000000", "reason_codes": ["NEGATIVE_BALANCE"], "remediation_status": "OPEN"}, {"loan_id": "LN-00000000", "reason_codes": ["NEGATIVE_BALANCE"], "remediation_status": "OPEN"}, {"loan_id": "LN-00000005", "reason_codes": ["MISSING_CREDIT_SCORE"], "remediation_status": "OPEN"}, {"loan_id": "LN-00000007", "reason_codes": ["MISSING_CREDIT_SCORE"], "remediation_status": "OPEN"}, {"loan_id": "LN-00000010", "reason_codes": ["INVALID_CREDIT_GRADE"], "remediation_status": "OPEN"}, {"loan_id": "LN-00000014", "reason_codes": ["INVALID_CREDIT_GRADE"], "remediation_status": "OPEN"}, {"loan_id": "LN-00000015", "reason_codes": ["NULL_MANDATORY_FIELD"], "remediation_status": "OPEN"}, {"loan_id": "LN-00000020", "reason_codes": ["NEGATIVE_BALANCE"], "remediation_status": "OPEN"}, {"loan_id": "LN-00000025", "reason_codes": ["MISSING_CREDIT_SCORE"], "remediation_status": "OPEN"}, {"loan_id": "LN-00000030", "reason_codes": ["INVALID_CREDIT_GRADE"], "remediation_status": "OPEN"}, {"loan_id": "LN-00000035", "reason_codes": ["NULL_MANDATORY_FIELD"], "remediation_status": "OPEN"}, {"loan_id": "LN-00000040", "reason_codes": ["NEGATIVE_BALANCE"], "remediation_status": "OPEN"}, {"loan_id": "LN-00000045", "reason_codes": ["MISSING_CREDIT_SCORE"], "remediation_status": "OPEN"}, {"loan_id": "LN-00000050", "reason_codes": ["INVALID_CREDIT_GRADE"], "remediation_status": "OPEN"}, {"loan_id": "LN-00000055", "reason_codes": ["NULL_MANDATORY_FIELD"], "remediation_status": "OPEN"}]}
+</script>
+
+<script>
+  const run = JSON.parse(document.getElementById('run-data').textContent);
+
+  document.getElementById('generated-at').textContent =
+    new Date(run.generated_at).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+
+  const PHASES = [
+    { n: 0, title: 'Foundations', detail: 'Repo scaffolding, storage schema DDL, pipeline_run_id + metadata stamper.', status: 'done' },
+    { n: 1, title: 'Ingestion & Metadata Stamping', detail: 'Batch file + event stream adapters, append-only landing store, synthetic generator.', status: 'done' },
+    { n: 2, title: 'Contract Enforcement & Exception Handling', detail: 'Versioned contract registry, validation engine, quarantine with reason codes.', status: 'done' },
+    { n: 3, title: 'PII Governance', detail: 'HMAC-SHA256 hashing of SSN/EIN, legal name, address; RBAC permission wiring.', status: 'next' },
+    { n: 4, title: 'Risk Metric Engine', detail: 'Reference data store (CCF/risk-weight), EAD/EL/RWA calculators, maturity bucketing.', status: 'pending' },
+    { n: 5, title: 'Schedule Aggregation', detail: 'Group by period × segment × grade × maturity bucket; idempotent re-aggregation.', status: 'pending' },
+    { n: 6, title: 'Catalog & Consumer Interface', detail: 'Operational dashboard (health/DQ/SLA), read-only query sandbox.', status: 'pending' },
+    { n: 7, title: 'Cross-Cutting Hardening & E2E', detail: 'Lineage/audit wiring, orchestrator, full end-to-end test, performance pass.', status: 'pending' },
+    { n: 8, title: 'Scenario Reference Data & Stress Engine', detail: 'Fed supervisory scenarios, translation tables, deterministic stressed EAD/EL/RWA.', status: 'pending', tag: 'agentic layer begins' },
+    { n: 9, title: 'MCP Tool Server, Policy & Agent Audit', detail: 'Typed tool server, Policy Enforcement Point, Approval Queue, Agent Trace Store, PII Egress Guard.', status: 'pending' },
+    { n: 10, title: 'Agent Runtime, AG-1 & AG-2', detail: 'Supervisor graph; Pipeline Operations agent; Data Quality Triage agent.', status: 'pending' },
+    { n: 11, title: 'AG-3, AG-4, AG-5 & Agent UI', detail: 'Stress Scenario, Executive Reporting (grounded), Concierge agents; conversational workspace.', status: 'pending' },
+    { n: 12, title: 'Evaluation, Red-Teaming & Demo', detail: 'Golden-set evals as a CI release gate, red-team pass, model inventory entry.', status: 'pending' },
+  ];
+
+  const doneCount = PHASES.filter((p) => p.status === 'done').length;
+  const pct = Math.round((doneCount / PHASES.length) * 100);
+  document.getElementById('progress-fill').style.setProperty('--pct', pct + '%');
+  document.getElementById('progress-caption-left').textContent =
+    `${doneCount} of ${PHASES.length} phases complete`;
+  document.getElementById('progress-caption-right').textContent = `${pct}%`;
+
+  document.getElementById('timeline').innerHTML = PHASES.map((p) => `
+    <div class="phase-row" data-status="${p.status}">
+      <div class="phase-num">${String(p.n).padStart(2, '0')}</div>
+      <div class="phase-body">
+        <div class="phase-title">
+          Phase ${p.n} &mdash; ${p.title}
+          ${p.tag ? `<span class="tag-pill">${p.tag}</span>` : ''}
+        </div>
+        <div class="phase-detail">${p.detail}</div>
+      </div>
+      <span class="status-pill ${p.status}">${p.status.toUpperCase()}</span>
+    </div>
+  `).join('');
+
+  document.getElementById('contract-tag').textContent =
+    `contract ${run.contract.contract_id} v${run.contract.version} · ${run.contract.field_count} fields · ${run.contract.business_rule_count} business rule(s)`;
+
+  const kpis = [
+    { label: 'Records landed', value: run.validation.total_count },
+    { label: 'Passed validation', value: run.validation.valid_count, cls: 'good' },
+    { label: 'Quarantined', value: run.validation.quarantined_count, cls: 'warn' },
+    { label: 'DQ pass rate', value: `${(run.validation.dq_pass_rate * 100).toFixed(1)}%`, cls: run.validation.dq_pass_rate >= 0.98 ? 'good' : 'warn' },
+  ];
+  document.getElementById('kpi-strip').innerHTML = kpis.map((k) => `
+    <div class="kpi">
+      <div class="kpi-value ${k.cls || ''}">${k.value}</div>
+      <div class="kpi-label">${k.label}</div>
+    </div>
+  `).join('');
+
+  const reasonEntries = Object.entries(run.validation.reason_code_counts).sort((a, b) => b[1] - a[1]);
+  const maxReasonCount = Math.max(...reasonEntries.map(([, c]) => c), 1);
+  document.getElementById('reason-bars').innerHTML = reasonEntries.map(([code, count]) => `
+    <div class="bar-row">
+      <div class="bar-label">${code}</div>
+      <div class="bar-track"><div class="bar-fill" data-w="${(count / maxReasonCount) * 100}"></div></div>
+      <div class="bar-value">${count}</div>
+    </div>
+  `).join('');
+  requestAnimationFrame(() => {
+    document.querySelectorAll('.bar-fill').forEach((el) => { el.style.width = el.dataset.w + '%'; });
+  });
+
+  const channels = [
+    { name: 'Batch file adapter', data: run.ingestion.batch },
+    { name: 'Event stream adapter', data: run.ingestion.event },
+  ];
+  document.getElementById('channel-summary').innerHTML = channels.map((c) => `
+    <div style="margin-bottom: 0.9rem;">
+      <div style="font-weight:600; font-size:0.82rem; margin-bottom:0.3rem;">${c.name}</div>
+      <div class="muted" style="font-size:0.78rem; line-height:1.6;">
+        <div><span class="mono">${c.data.records_landed}</span> records landed from <span class="mono">${c.data.source_system}</span></div>
+        <div>parse errors: <span class="mono">${c.data.parse_errors}</span></div>
+        <div>run id: <span class="mono">${c.data.pipeline_run_id.slice(0, 13)}&hellip;</span></div>
+      </div>
+    </div>
+  `).join('');
+
+  document.getElementById('quarantine-body').innerHTML = run.quarantine_sample.map((q) => `
+    <tr>
+      <td class="mono">${q.loan_id}</td>
+      <td>${q.reason_codes.map((c) => `<span class="reason-chip">${c}</span>`).join(' ')}</td>
+      <td class="muted">${q.remediation_status}</td>
+    </tr>
+  `).join('');
+
+  const COMPONENTS = [
+    { zone: 'Deterministic engine — ingestion & governance', items: [
+      { id: 'C1', name: 'Ingestion Gateway', status: 'done' },
+      { id: 'C2', name: 'Metadata Stamper', status: 'done' },
+      { id: 'C3', name: 'Landing Store', status: 'done' },
+      { id: 'C4', name: 'Contract Registry', status: 'done' },
+      { id: 'C5', name: 'Validation Engine', status: 'done' },
+      { id: 'C6', name: 'Quarantine Store', status: 'done' },
+      { id: 'C7', name: 'PII Detection & Hashing', status: 'pending' },
+      { id: 'C8', name: 'Re-identification Vault', status: 'pending' },
+      { id: 'C14', name: 'RBAC / IAM Module', status: 'pending' },
+      { id: 'C15', name: 'Lineage & Audit Log', status: 'pending' },
+      { id: 'C16', name: 'Orchestrator', status: 'pending' },
+    ]},
+    { zone: 'Deterministic engine — risk & reporting', items: [
+      { id: 'C9', name: 'Reference Data Store', status: 'pending' },
+      { id: 'C10', name: 'Risk Metric Engine', status: 'pending' },
+      { id: 'C11', name: 'Aggregation Engine', status: 'pending' },
+      { id: 'C12', name: 'Data Product Catalog', status: 'pending' },
+      { id: 'C13', name: 'Query Sandbox Service', status: 'pending' },
+    ]},
+    { zone: 'Agentic layer (v2.0)', items: [
+      { id: 'C17', name: 'Agent Runtime', status: 'pending' },
+      { id: 'C18', name: 'AG-1 Pipeline Operations', status: 'pending' },
+      { id: 'C19', name: 'AG-2 Data Quality Triage', status: 'pending' },
+      { id: 'C20', name: 'AG-3 Stress Scenario', status: 'pending' },
+      { id: 'C21', name: 'AG-4 Executive Reporting', status: 'pending' },
+      { id: 'C22', name: 'AG-5 Data Product Concierge', status: 'pending' },
+      { id: 'C23', name: 'MCP Tool Server', status: 'pending' },
+      { id: 'C24', name: 'Policy Enforcement Point', status: 'pending' },
+      { id: 'C25', name: 'Approval Queue Service', status: 'pending' },
+      { id: 'C26', name: 'Agent Trace Store', status: 'pending' },
+      { id: 'C27', name: 'Scenario Reference Store', status: 'pending' },
+      { id: 'C28', name: 'Stress Engine', status: 'pending' },
+      { id: 'C29', name: 'Numeric Grounding Checker', status: 'pending' },
+      { id: 'C30', name: 'Evaluation Harness', status: 'pending' },
+      { id: 'C31', name: 'PII Egress Guard', status: 'pending' },
+    ]},
+  ];
+
+  document.getElementById('component-zones').innerHTML = COMPONENTS.map((zone) => `
+    <div class="zone-group">
+      <div class="zone-label">${zone.zone}</div>
+      <div class="component-grid">
+        ${zone.items.map((c) => `
+          <div class="component-card" data-status="${c.status}">
+            <div class="component-id">${c.id}</div>
+            <div class="component-name">${c.name}</div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `).join('');
+</script>

@@ -1,0 +1,144 @@
+{
+  "generated_at": "2026-10-04T23:30:48.581330+00:00",
+  "contract": {
+    "contract_id": "commercial_loan",
+    "version": "1.0.0",
+    "field_count": 8,
+    "pii_field_count": 3,
+    "business_rule_count": 1
+  },
+  "ingestion": {
+    "batch": {
+      "pipeline_run_id": "678d2843-d91c-463e-bcaa-fb26ef932348",
+      "records_landed": 60,
+      "parse_errors": 0,
+      "source_system": "CORE_LOAN_SYSTEM"
+    },
+    "event": {
+      "pipeline_run_id": "8e960716-8dd5-4cbf-aba0-f457b7aaa08f",
+      "records_landed": 20,
+      "parse_errors": 0,
+      "source_system": "CREDIT_PERFORMANCE_FEED"
+    }
+  },
+  "validation": {
+    "pipeline_run_id": "3b330f40-4275-451a-82dd-d614179ab596",
+    "total_count": 80,
+    "valid_count": 65,
+    "quarantined_count": 15,
+    "dq_pass_rate": 0.8125,
+    "reason_code_counts": {
+      "NEGATIVE_BALANCE": 4,
+      "MISSING_CREDIT_SCORE": 4,
+      "INVALID_CREDIT_GRADE": 4,
+      "NULL_MANDATORY_FIELD": 3
+    }
+  },
+  "quarantine_sample": [
+    {
+      "loan_id": "LN-00000000",
+      "reason_codes": [
+        "NEGATIVE_BALANCE"
+      ],
+      "remediation_status": "OPEN"
+    },
+    {
+      "loan_id": "LN-00000000",
+      "reason_codes": [
+        "NEGATIVE_BALANCE"
+      ],
+      "remediation_status": "OPEN"
+    },
+    {
+      "loan_id": "LN-00000005",
+      "reason_codes": [
+        "MISSING_CREDIT_SCORE"
+      ],
+      "remediation_status": "OPEN"
+    },
+    {
+      "loan_id": "LN-00000007",
+      "reason_codes": [
+        "MISSING_CREDIT_SCORE"
+      ],
+      "remediation_status": "OPEN"
+    },
+    {
+      "loan_id": "LN-00000010",
+      "reason_codes": [
+        "INVALID_CREDIT_GRADE"
+      ],
+      "remediation_status": "OPEN"
+    },
+    {
+      "loan_id": "LN-00000014",
+      "reason_codes": [
+        "INVALID_CREDIT_GRADE"
+      ],
+      "remediation_status": "OPEN"
+    },
+    {
+      "loan_id": "LN-00000015",
+      "reason_codes": [
+        "NULL_MANDATORY_FIELD"
+      ],
+      "remediation_status": "OPEN"
+    },
+    {
+      "loan_id": "LN-00000020",
+      "reason_codes": [
+        "NEGATIVE_BALANCE"
+      ],
+      "remediation_status": "OPEN"
+    },
+    {
+      "loan_id": "LN-00000025",
+      "reason_codes": [
+        "MISSING_CREDIT_SCORE"
+      ],
+      "remediation_status": "OPEN"
+    },
+    {
+      "loan_id": "LN-00000030",
+      "reason_codes": [
+        "INVALID_CREDIT_GRADE"
+      ],
+      "remediation_status": "OPEN"
+    },
+    {
+      "loan_id": "LN-00000035",
+      "reason_codes": [
+        "NULL_MANDATORY_FIELD"
+      ],
+      "remediation_status": "OPEN"
+    },
+    {
+      "loan_id": "LN-00000040",
+      "reason_codes": [
+        "NEGATIVE_BALANCE"
+      ],
+      "remediation_status": "OPEN"
+    },
+    {
+      "loan_id": "LN-00000045",
+      "reason_codes": [
+        "MISSING_CREDIT_SCORE"
+      ],
+      "remediation_status": "OPEN"
+    },
+    {
+      "loan_id": "LN-00000050",
+      "reason_codes": [
+        "INVALID_CREDIT_GRADE"
+      ],
+      "remediation_status": "OPEN"
+    },
+    {
+      "loan_id": "LN-00000055",
+      "reason_codes": [
+        "NULL_MANDATORY_FIELD"
+      ],
+      "remediation_status": "OPEN"
+    }
+  ]
+}

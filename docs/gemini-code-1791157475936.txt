@@ -1,0 +1,24 @@
+flowchart TD
+    classDef human fill:#ffebcd,stroke:#333,stroke-width:2px;
+    classDef agent fill:#e8f5e9,stroke:#333,stroke-width:2px;
+    classDef process fill:#e1f5fe,stroke:#333,stroke-width:2px;
+    classDef security fill:#ffebee,stroke:#333,stroke-width:2px;
+
+    User((Business User / Engineer)):::human -->|Natural Language Request| Sup[Supervisor Agent / Orchestrator]:::agent
+    
+    Sup <--> DQ[Data Quality Agent]:::agent
+    Sup <--> Report[Executive Reporting Agent]:::agent
+    Sup <--> Query[SQL Concierge Agent]:::agent
+    
+    DQ --> Tool[MCP Tool Server]:::process
+    Report --> Tool
+    Query --> Tool
+    
+    Tool --> PEP{Policy Enforcement Point}:::security
+    
+    PEP -->|High-Impact/Write Action| AppQ[Approval Queue]:::security
+    AppQ -->|Human Approves via 1-Click| Exec[Core System Execution]:::process
+    
+    PEP -->|Read-Only/Safe Action| Exec
+    
+    Exec -->|Returns Data/Context| Tool
