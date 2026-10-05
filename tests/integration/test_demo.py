@@ -17,6 +17,10 @@ def test_run_demo_end_to_end(tmp_db_path: Path):
         len(result.risk_calculation.metrics) + len(result.risk_calculation.exceptions)
         == result.validation.governed_count
     )
+    assert result.aggregation.input_metric_count == len(result.risk_calculation.metrics)
+    assert sum(row.loan_count for row in result.aggregation.aggregates) == len(
+        result.risk_calculation.metrics
+    )
 
 
 def test_run_demo_is_reproducible_with_same_seed(tmp_db_path: Path, tmp_path: Path):

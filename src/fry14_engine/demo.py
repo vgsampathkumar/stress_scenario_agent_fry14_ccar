@@ -1,9 +1,10 @@
 """End-to-end demo of the engine as built so far: generates synthetic loan
 records, ingests them via both the batch-file and event-stream adapters,
 validates them against the active `commercial_loan` contract, hashes PII,
-routes to the governed or quarantine store, then computes EAD/EL/RWA for
-every governed record. This exercises exactly the real code paths built in
-Phases 0-4 — nothing here is mocked or hardcoded for display purposes.
+routes to the governed or quarantine store, computes EAD/EL/RWA for every
+governed record, then aggregates those metrics into schedule-shaped rows.
+This exercises exactly the real code paths built in Phases 0-5 — nothing
+here is mocked or hardcoded for display purposes.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
+from fry14_engine.aggregation.gateway import AggregationGateway, AggregationRunResult
 from fry14_engine.common.enums import IngestionChannel
 from fry14_engine.common.ids import new_pipeline_run_id
 from fry14_engine.common.metadata import MetadataStamper
@@ -45,6 +47,7 @@ class DemoResult:
     event_ingest: IngestionRunResult
     validation: ValidationRunResult
     risk_calculation: RiskCalculationRunResult
+    aggregation: AggregationRunResult
     contract_id: str
     contract_version: str
 
@@ -56,14 +59,15 @@ def run_demo(
     db_path: Path | str = DEFAULT_DEMO_DB_PATH,
     reporting_period: str | None = None,
 ) -> DemoResult:
-    """Run the Phase 0-4 pipeline once and return a structured result.
+    """Run the Phase 0-5 pipeline once and return a structured result.
 
     Splits `count` records 75/25 between the batch-file channel and the
     event-stream channel, so both ingestion adapters are genuinely
     exercised, validates the combined set against the active
     `commercial_loan` contract (hashing PII and routing to the governed or
-    quarantine store), then computes EAD/EL/RWA for every governed record
-    as of `reporting_period` (defaults to the current month).
+    quarantine store), computes EAD/EL/RWA for every governed record as of
+    `reporting_period` (defaults to the current month), then aggregates
+    those metrics into schedule-shaped rows.
     """
     db_path = Path(db_path)
     reporting_period = reporting_period or datetime.now(UTC).strftime("%Y-%m")
@@ -125,6 +129,9 @@ def run_demo(
     risk_calculation_gateway = RiskCalculationGateway(connection)
     risk_calculation = risk_calculation_gateway.run(governed_records, reporting_period, risk_run_id)
 
+    aggregation_gateway = AggregationGateway(connection)
+    aggregation = aggregation_gateway.run(risk_run_id)
+
     connection.close()
 
     return DemoResult(
@@ -133,6 +140,7 @@ def run_demo(
         event_ingest=event_ingest,
         validation=validation,
         risk_calculation=risk_calculation,
+        aggregation=aggregation,
         contract_id=contract.contract_id,
         contract_version=contract.version,
     )
@@ -143,7 +151,7 @@ def format_report(result: DemoResult) -> str:
     w = lines.append
 
     w("=" * 64)
-    w("FR Y-14 ENGINE DEMO - Phases 0-4 (ingestion through risk metrics)")
+    w("FR Y-14 ENGINE DEMO - Phases 0-5 (ingestion through aggregation)")
     w("=" * 64)
     w("")
     w(f"Database: {result.db_path}")
@@ -195,11 +203,26 @@ def format_report(result: DemoResult) -> str:
         for code, n in sorted(counts.items(), key=lambda kv: -kv[1]):
             w(f"    {code:<28} {n:>4}")
     w("")
+    w("-- Schedule aggregation " + "-" * 41)
+    agg = result.aggregation
+    w(f"  Schema version           : v{agg.schema_version}")
+    w(f"  Input metric rows        : {agg.input_metric_count}")
+    w(f"  Aggregate rows produced  : {len(agg.aggregates)}")
+    if agg.aggregates:
+        w("  By portfolio segment x grade x maturity bucket:")
+        for row in sorted(
+            agg.aggregates, key=lambda r: (r.portfolio_segment, r.credit_rating_grade)
+        ):
+            w(
+                f"    {row.portfolio_segment:<16} grade={row.credit_rating_grade:>2} "
+                f"{str(row.remaining_maturity_bucket):<8} loans={row.loan_count:>3} "
+                f"EAD={row.total_ead:>15,.2f}"
+            )
+    w("")
     w("=" * 64)
     w(
-        "Note: risk metrics are persisted to metrics.loan_risk_metrics, stamped"
-        " with the calc engine and regulatory parameter versions used. Phase 5+"
-        " (aggregation, catalog) isn't built yet, so there's no further stage"
-        " to hand them to."
+        "Note: aggregate rows are persisted to aggregates.schedule_aggregate,"
+        " upserted (idempotent re-aggregation). Phase 6+ (catalog, query"
+        " sandbox) isn't built yet, so there's no consumer-facing view of them."
     )
     return "\n".join(lines)
