@@ -1,5 +1,5 @@
-"""Risk metrics store: persists `LoanRiskMetrics` and `CalculationException`
-rows. See schemas/006_metrics.sql.
+"""Risk metrics store: persists and reads back `LoanRiskMetrics` and
+`CalculationException` rows. See schemas/006_metrics.sql.
 """
 
 from __future__ import annotations
@@ -8,12 +8,24 @@ import duckdb
 
 from fry14_engine.risk_engine.models import CalculationException, LoanRiskMetrics
 
-_METRICS_INSERT_SQL = """
-    INSERT INTO metrics.loan_risk_metrics
-        (loan_id, reporting_period, ead, el, rwa, asset_class, portfolio_segment,
-         credit_rating_grade, remaining_maturity_bucket, calc_engine_version,
-         regulatory_parameter_version, pipeline_run_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+_METRICS_COLUMNS = [
+    "loan_id",
+    "reporting_period",
+    "ead",
+    "el",
+    "rwa",
+    "asset_class",
+    "portfolio_segment",
+    "credit_rating_grade",
+    "remaining_maturity_bucket",
+    "calc_engine_version",
+    "regulatory_parameter_version",
+    "pipeline_run_id",
+]
+
+_METRICS_INSERT_SQL = f"""
+    INSERT INTO metrics.loan_risk_metrics ({", ".join(_METRICS_COLUMNS)})
+    VALUES ({", ".join("?" for _ in _METRICS_COLUMNS)})
 """
 
 _EXCEPTION_INSERT_SQL = """
@@ -49,6 +61,14 @@ class RiskMetricsStore:
         ]
         self._connection.executemany(_METRICS_INSERT_SQL, rows)
         return len(rows)
+
+    def read_by_pipeline_run_id(self, pipeline_run_id: str) -> list[LoanRiskMetrics]:
+        rows = self._connection.execute(
+            f"SELECT {', '.join(_METRICS_COLUMNS)} FROM metrics.loan_risk_metrics "
+            "WHERE pipeline_run_id = ?",
+            [pipeline_run_id],
+        ).fetchall()
+        return [LoanRiskMetrics(**dict(zip(_METRICS_COLUMNS, row, strict=True))) for row in rows]
 
     def write_exceptions(self, exceptions: list[CalculationException]) -> int:
         if not exceptions:

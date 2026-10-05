@@ -67,7 +67,11 @@ src/fry14_engine/
     engine.py                  pure engine over an in-memory RegulatoryParameterSet
     store.py                    persists metrics.loan_risk_metrics + calculation_exception
     gateway.py                   loads active parameters -> engine -> persists
-  aggregation/          schedule aggregation engine (Phase 5)
+  aggregation/          schedule aggregation engine, idempotent upsert (Phase 5 — done)
+    models.py                ScheduleAggregate (reporting_period x segment x grade x bucket)
+    engine.py                 pure group-by/SUM/COUNT over LoanRiskMetrics
+    store.py                   upsert on the aggregate PK; new schema_version = retained history
+    gateway.py                  reads a risk-calc run's metrics -> aggregates -> upserts
   catalog/               data product catalog service (Phase 6)
   rbac/                   role-permission matrix + RbacService (Phase 3 — done; API-level wiring is Phase 6)
     matrix.py                ROLE_PERMISSION_MATRIX (design doc §2.9 + v2.0 §2.12 additions)
@@ -138,18 +142,20 @@ fry14 demo
 Generates synthetic commercial loan records, ingests them through both the
 batch-file and event-stream adapters, validates them against the active
 `commercial_loan` contract, hashes PII (HMAC-SHA256) regardless of pass/fail,
-routes each record to the governed store or the quarantine store, then
-computes EAD/EL/RWA for every governed record against the active
-regulatory parameter set. Prints a report: records landed per channel, how
-many were governed vs. quarantined, the DQ pass rate, a reason-code
-breakdown, and risk-calculation totals (EAD/EL/RWA plus any calculation
-exceptions). This exercises the real Phase 0-4 code paths — nothing in the
-report is mocked (the PII hashing key is a hardcoded dev-only default so
-the demo runs with no setup; see `demo.py` for why that's never acceptable
-outside a demo). Options: `--count`, `--bad-rate`, `--seed`, `--db-path`
-(defaults to `data/demo.duckdb`, separate from the main bootstrap DB). Each
-run appends new rows (every zone is append-only by design) rather than
-overwriting history.
+routes each record to the governed store or the quarantine store, computes
+EAD/EL/RWA for every governed record against the active regulatory
+parameter set, then aggregates those metrics into schedule-shaped rows
+(reporting period x segment x grade x maturity bucket). Prints a report:
+records landed per channel, how many were governed vs. quarantined, the DQ
+pass rate, a reason-code breakdown, risk-calculation totals (EAD/EL/RWA
+plus any calculation exceptions), and the resulting aggregate rows. This
+exercises the real Phase 0-5 code paths — nothing in the report is mocked
+(the PII hashing key is a hardcoded dev-only default so the demo runs with
+no setup; see `demo.py` for why that's never acceptable outside a demo).
+Options: `--count`, `--bad-rate`, `--seed`, `--db-path` (defaults to
+`data/demo.duckdb`, separate from the main bootstrap DB). Each run appends
+new rows (every zone except aggregates is append-only; aggregates upsert
+by design, so re-running the same reporting period updates it in place).
 
 ## Run tests
 
@@ -190,15 +196,22 @@ This repo implements the **v2.0 (agentic)** spec. Of the full 12-phase plan
   cents at calculation time so the in-memory values match exactly what the
   `DECIMAL(18, 2)` metrics columns persist — a real discrepancy caught
   while building this phase, not a hypothetical.
-- **Phase 5 is next**: Schedule Aggregation — unchanged from v1.0 (see
-  `03-implementation-plan.md` Phase 5).
-- Phases 6–7 (catalog/sandbox, cross-cutting hardening) remain the
-  deterministic-engine build-out.
+- **Phase 5 complete**: the Aggregation Engine groups `LoanRiskMetrics` by
+  reporting period x portfolio segment x credit grade x maturity bucket
+  into `ScheduleAggregate` rows (SUM(EAD/EL/RWA), COUNT(loans)). Persistence
+  is an upsert keyed on those four dimensions plus `schema_version` — a
+  same-version re-run overwrites cleanly (idempotent re-aggregation,
+  verified by a test that re-runs and checks totals don't double), while a
+  *new* `schema_version` is retained as separate history, not an overwrite.
+- **Phase 6 is next**: the Data Product Catalog and Consumer Query Sandbox
+  — unchanged from v1.0 (see `03-implementation-plan.md` Phase 6).
+- Phase 7 (cross-cutting hardening: lineage/audit wiring, orchestrator,
+  end-to-end perf pass) remains the deterministic-engine build-out.
 - **Phase 8 is the earliest agentic-layer phase** (Scenario Reference Data &
-  Stress Engine); it depends only on Phase 4 (now complete) and can run in
-  parallel with Phases 5–6. Phases 9–12 (MCP server/policy/audit, agent
-  runtime + AG-1/AG-2, AG-3/AG-4/AG-5 + UI, evaluation/red-teaming) follow
-  in sequence after Phase 8.
+  Stress Engine); it depends only on Phase 4 (complete) and can run in
+  parallel with Phases 5–6 (5 now also complete). Phases 9–12 (MCP
+  server/policy/audit, agent runtime + AG-1/AG-2, AG-3/AG-4/AG-5 + UI,
+  evaluation/red-teaming) follow in sequence after Phase 8.
 
 None of the agentic-layer code (`agent_runtime/`, `mcp_server/`, `policy/`,
 `approval_queue/`, `agent_trace/`, `scenario/`, `grounding/`, `evaluation/`,
