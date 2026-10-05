@@ -72,8 +72,13 @@ src/fry14_engine/
     engine.py                 pure group-by/SUM/COUNT over LoanRiskMetrics
     store.py                   upsert on the aggregate PK; new schema_version = retained history
     gateway.py                  reads a risk-calc run's metrics -> aggregates -> upserts
-  catalog/               data product catalog service (Phase 6)
-  rbac/                   role-permission matrix + RbacService (Phase 3 — done; API-level wiring is Phase 6)
+  catalog/               data product catalog + RBAC-scoped query sandbox (Phase 6 — done)
+    models.py                DataProductCatalogEntry, SchemaVersionHistoryEntry
+    health.py                 compute_sla_status (freshness-based), compute_health_score (weighted)
+    store.py                   upserts the catalog entry; schema version history is append-only
+    gateway.py                  update_after_run: DQ% + SLA + health score, after each pipeline run
+    query_sandbox.py             typed, RBAC-gated read methods over ScheduleAggregate — no write surface
+  rbac/                   role-permission matrix + RbacService (Phase 3 — done)
     matrix.py                ROLE_PERMISSION_MATRIX (design doc §2.9 + v2.0 §2.12 additions)
     service.py                RbacService.has_permission / require_permission
   audit/                   lineage/audit event logging (Phase 7)
@@ -144,12 +149,13 @@ batch-file and event-stream adapters, validates them against the active
 `commercial_loan` contract, hashes PII (HMAC-SHA256) regardless of pass/fail,
 routes each record to the governed store or the quarantine store, computes
 EAD/EL/RWA for every governed record against the active regulatory
-parameter set, then aggregates those metrics into schedule-shaped rows
-(reporting period x segment x grade x maturity bucket). Prints a report:
-records landed per channel, how many were governed vs. quarantined, the DQ
-pass rate, a reason-code breakdown, risk-calculation totals (EAD/EL/RWA
-plus any calculation exceptions), and the resulting aggregate rows. This
-exercises the real Phase 0-5 code paths — nothing in the report is mocked
+parameter set, aggregates those metrics into schedule-shaped rows
+(reporting period x segment x grade x maturity bucket), updates the data
+product catalog (health score, DQ %, SLA status), then runs one allowed
+query sandbox request (as `FINANCE`) and one denied one (as
+`DATA_ENGINEER`, which has no `QUERY_SANDBOX_READ` permission) to prove the
+RBAC gate actually works. Prints a report covering every stage. This
+exercises the real Phase 0-6 code paths — nothing in the report is mocked
 (the PII hashing key is a hardcoded dev-only default so the demo runs with
 no setup; see `demo.py` for why that's never acceptable outside a demo).
 Options: `--count`, `--bad-rate`, `--seed`, `--db-path` (defaults to
@@ -203,13 +209,22 @@ This repo implements the **v2.0 (agentic)** spec. Of the full 12-phase plan
   same-version re-run overwrites cleanly (idempotent re-aggregation,
   verified by a test that re-runs and checks totals don't double), while a
   *new* `schema_version` is retained as separate history, not an overwrite.
-- **Phase 6 is next**: the Data Product Catalog and Consumer Query Sandbox
-  — unchanged from v1.0 (see `03-implementation-plan.md` Phase 6).
+- **Phase 6 complete**: the Data Product Catalog (health score = 70% DQ
+  pass rate + 30% SLA adherence, a transparent documented formula, not a
+  black box; SLA status is freshness-based — ON_TIME/AT_RISK/BREACHED off
+  how long ago the last run completed) and the Query Sandbox (typed,
+  parameterized read methods over `ScheduleAggregate`, RBAC-gated via the
+  existing `QUERY_SANDBOX_READ` permission — `FINANCE`/`RISK`/
+  `REGULATORY_REPORTING`/`COMPLIANCE_AUDIT`/`ADMIN` can query it,
+  `DATA_ENGINEER` and `SYSTEM_SCHEDULER` cannot). Per the design doc's own
+  allowance, the "Operational Dashboard" for this phase is the `fry14 demo`
+  report (a documented "UI-equivalent"), not a web UI — no HTTP/API layer
+  has been built in any phase so far.
 - Phase 7 (cross-cutting hardening: lineage/audit wiring, orchestrator,
   end-to-end perf pass) remains the deterministic-engine build-out.
 - **Phase 8 is the earliest agentic-layer phase** (Scenario Reference Data &
   Stress Engine); it depends only on Phase 4 (complete) and can run in
-  parallel with Phases 5–6 (5 now also complete). Phases 9–12 (MCP
+  parallel with Phases 5–6 (both now complete). Phases 9–12 (MCP
   server/policy/audit, agent runtime + AG-1/AG-2, AG-3/AG-4/AG-5 + UI,
   evaluation/red-teaming) follow in sequence after Phase 8.
 

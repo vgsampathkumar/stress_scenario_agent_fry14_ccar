@@ -2,21 +2,25 @@
 records, ingests them via both the batch-file and event-stream adapters,
 validates them against the active `commercial_loan` contract, hashes PII,
 routes to the governed or quarantine store, computes EAD/EL/RWA for every
-governed record, then aggregates those metrics into schedule-shaped rows.
-This exercises exactly the real code paths built in Phases 0-5 — nothing
-here is mocked or hardcoded for display purposes.
+governed record, aggregates those metrics into schedule-shaped rows,
+updates the data product catalog, and demonstrates the RBAC-scoped query
+sandbox (one allowed query, one denied). This exercises exactly the real
+code paths built in Phases 0-6 — nothing here is mocked or hardcoded for
+display purposes.
 """
 
 from __future__ import annotations
 
 import tempfile
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 
 from fry14_engine.aggregation.gateway import AggregationGateway, AggregationRunResult
-from fry14_engine.common.enums import IngestionChannel
+from fry14_engine.catalog.gateway import CatalogGateway, CatalogUpdateResult
+from fry14_engine.catalog.query_sandbox import QuerySandboxService
+from fry14_engine.common.enums import IngestionChannel, RoleName
 from fry14_engine.common.ids import new_pipeline_run_id
 from fry14_engine.common.metadata import MetadataStamper
 from fry14_engine.contracts.registry import ContractRegistry
@@ -27,6 +31,7 @@ from fry14_engine.ingestion.event_stream_adapter import EventStreamAdapter, InMe
 from fry14_engine.ingestion.gateway import IngestionGateway, IngestionRunResult
 from fry14_engine.pii.governed_store import GovernedStore
 from fry14_engine.pii.hashing_service import PIIHashingService
+from fry14_engine.rbac.service import PermissionDeniedError
 from fry14_engine.risk_engine.engine import RiskCalculationRunResult
 from fry14_engine.risk_engine.gateway import RiskCalculationGateway
 from fry14_engine.synthetic.generator import generate_loan_records
@@ -41,6 +46,14 @@ _DEMO_INSECURE_DEFAULT_HASH_KEY = "dev-only-insecure-default-key-do-not-use-in-p
 
 
 @dataclass
+class SandboxDemo:
+    allowed_role: RoleName
+    allowed_row_count: int
+    denied_role: RoleName
+    denied_as_expected: bool
+
+
+@dataclass
 class DemoResult:
     db_path: Path
     batch_ingest: IngestionRunResult
@@ -48,6 +61,8 @@ class DemoResult:
     validation: ValidationRunResult
     risk_calculation: RiskCalculationRunResult
     aggregation: AggregationRunResult
+    catalog: CatalogUpdateResult
+    sandbox: SandboxDemo
     contract_id: str
     contract_version: str
 
@@ -59,15 +74,16 @@ def run_demo(
     db_path: Path | str = DEFAULT_DEMO_DB_PATH,
     reporting_period: str | None = None,
 ) -> DemoResult:
-    """Run the Phase 0-5 pipeline once and return a structured result.
+    """Run the Phase 0-6 pipeline once and return a structured result.
 
     Splits `count` records 75/25 between the batch-file channel and the
     event-stream channel, so both ingestion adapters are genuinely
     exercised, validates the combined set against the active
     `commercial_loan` contract (hashing PII and routing to the governed or
     quarantine store), computes EAD/EL/RWA for every governed record as of
-    `reporting_period` (defaults to the current month), then aggregates
-    those metrics into schedule-shaped rows.
+    `reporting_period` (defaults to the current month), aggregates those
+    metrics into schedule-shaped rows, updates the data product catalog,
+    and runs one allowed and one denied query sandbox request.
     """
     db_path = Path(db_path)
     reporting_period = reporting_period or datetime.now(UTC).strftime("%Y-%m")
@@ -132,6 +148,35 @@ def run_demo(
     aggregation_gateway = AggregationGateway(connection)
     aggregation = aggregation_gateway.run(risk_run_id)
 
+    data_product_id = f"{contract.contract_id}.schedule"
+    catalog_gateway = CatalogGateway(connection)
+    catalog = catalog_gateway.update_after_run(
+        data_product_id=data_product_id,
+        pipeline_run_id=risk_run_id,
+        dq_pass_percentage=validation.dq_pass_rate * 100,
+        run_completed_at=datetime.now(UTC),
+        output_schema_version=aggregation.schema_version,
+        output_schema_effective_date=date.today(),
+    )
+
+    sandbox_service = QuerySandboxService(connection)
+    allowed_rows = sandbox_service.query_schedule(
+        RoleName.FINANCE, reporting_period, aggregation.schema_version
+    )
+    denied_as_expected = False
+    try:
+        sandbox_service.query_schedule(
+            RoleName.DATA_ENGINEER, reporting_period, aggregation.schema_version
+        )
+    except PermissionDeniedError:
+        denied_as_expected = True
+    sandbox = SandboxDemo(
+        allowed_role=RoleName.FINANCE,
+        allowed_row_count=len(allowed_rows),
+        denied_role=RoleName.DATA_ENGINEER,
+        denied_as_expected=denied_as_expected,
+    )
+
     connection.close()
 
     return DemoResult(
@@ -141,6 +186,8 @@ def run_demo(
         validation=validation,
         risk_calculation=risk_calculation,
         aggregation=aggregation,
+        catalog=catalog,
+        sandbox=sandbox,
         contract_id=contract.contract_id,
         contract_version=contract.version,
     )
@@ -151,7 +198,7 @@ def format_report(result: DemoResult) -> str:
     w = lines.append
 
     w("=" * 64)
-    w("FR Y-14 ENGINE DEMO - Phases 0-5 (ingestion through aggregation)")
+    w("FR Y-14 ENGINE DEMO - Phases 0-6 (ingestion through catalog/sandbox)")
     w("=" * 64)
     w("")
     w(f"Database: {result.db_path}")
@@ -208,21 +255,26 @@ def format_report(result: DemoResult) -> str:
     w(f"  Schema version           : v{agg.schema_version}")
     w(f"  Input metric rows        : {agg.input_metric_count}")
     w(f"  Aggregate rows produced  : {len(agg.aggregates)}")
-    if agg.aggregates:
-        w("  By portfolio segment x grade x maturity bucket:")
-        for row in sorted(
-            agg.aggregates, key=lambda r: (r.portfolio_segment, r.credit_rating_grade)
-        ):
-            w(
-                f"    {row.portfolio_segment:<16} grade={row.credit_rating_grade:>2} "
-                f"{str(row.remaining_maturity_bucket):<8} loans={row.loan_count:>3} "
-                f"EAD={row.total_ead:>15,.2f}"
-            )
+    w("")
+    w("-- Data product catalog " + "-" * 41)
+    entry = result.catalog.entry
+    w(f"  Data product             : {entry.data_product_id}")
+    w(f"  Health score              : {entry.health_score}")
+    w(f"  DQ pass %                 : {entry.dq_pass_percentage}")
+    w(f"  SLA status                 : {entry.sla_status}")
+    w("")
+    w("-- Query sandbox (RBAC-scoped, read-only) " + "-" * 22)
+    sb = result.sandbox
+    w(f"  {sb.allowed_role} query  : ALLOWED, {sb.allowed_row_count} rows returned")
+    w(
+        f"  {sb.denied_role} query  : "
+        f"{'DENIED as expected' if sb.denied_as_expected else 'UNEXPECTEDLY ALLOWED'}"
+    )
     w("")
     w("=" * 64)
     w(
-        "Note: aggregate rows are persisted to aggregates.schedule_aggregate,"
-        " upserted (idempotent re-aggregation). Phase 6+ (catalog, query"
-        " sandbox) isn't built yet, so there's no consumer-facing view of them."
+        "Note: the catalog entry and sandbox results above are produced by the"
+        " real CatalogGateway/QuerySandboxService, not hardcoded. Phase 7+"
+        " (lineage/audit wiring, orchestrator, perf pass) isn't built yet."
     )
     return "\n".join(lines)

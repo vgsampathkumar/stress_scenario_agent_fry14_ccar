@@ -21,6 +21,10 @@ def test_run_demo_end_to_end(tmp_db_path: Path):
     assert sum(row.loan_count for row in result.aggregation.aggregates) == len(
         result.risk_calculation.metrics
     )
+    assert result.catalog.entry.data_product_id == "commercial_loan.schedule"
+    assert result.catalog.entry.last_run_id is not None
+    assert result.sandbox.allowed_row_count == len(result.aggregation.aggregates)
+    assert result.sandbox.denied_as_expected is True
 
 
 def test_run_demo_is_reproducible_with_same_seed(tmp_db_path: Path, tmp_path: Path):
