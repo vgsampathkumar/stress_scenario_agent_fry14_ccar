@@ -10,6 +10,7 @@ from typing import Any
 
 import duckdb
 
+from fry14_engine.common.db_helpers import execute_bulk_insert
 from fry14_engine.pii.governed_models import GovernedLoanRecord
 
 _COLUMNS = [
@@ -33,9 +34,9 @@ _COLUMNS = [
     "ingestion_timestamp",
 ]
 
-_INSERT_SQL = f"""
+_INSERT_SQL_TEMPLATE = f"""
     INSERT INTO governed.loan_record ({", ".join(_COLUMNS)})
-    VALUES ({", ".join("?" for _ in _COLUMNS)})
+    VALUES {{values}}
 """
 
 
@@ -47,7 +48,7 @@ class GovernedStore:
         if not records:
             return 0
         rows = [self._to_row(record) for record in records]
-        self._connection.executemany(_INSERT_SQL, rows)
+        execute_bulk_insert(self._connection, _INSERT_SQL_TEMPLATE, rows)
         return len(rows)
 
     def read_by_pipeline_run_id(self, pipeline_run_id: str) -> list[GovernedLoanRecord]:

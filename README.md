@@ -19,6 +19,7 @@ See the design docs for full context:
 - [`01-approach-paper.md`](01-approach-paper.md) — architecture rationale, principles, trade-offs
 - [`02-design-document.md`](02-design-document.md) — component/data/interface design
 - [`03-implementation-plan.md`](03-implementation-plan.md) — phased delivery plan
+- [`RUNBOOK.md`](RUNBOOK.md) — how to run it, interpret output, troubleshoot, and reconstruct a run from its audit log
 
 ## Agentic layer roster
 
@@ -39,6 +40,8 @@ per tool call. See `02-design-document.md` §1 (C17–C31) and §2.10–2.12.
 ```
 src/fry14_engine/
   common/          ids.py, enums.py, metadata.py — shared utilities (Phase 0)
+    db_helpers.py          execute_bulk_insert: one multi-row INSERT, not row-at-a-time executemany
+                           (a real ~100x perf bug found and fixed in Phase 7 — see RUNBOOK.md §6)
   ingestion/        batch + event adapters, landing store, gateway (Phase 1 — done)
     adapter.py           IngestionAdapter ABC + IngestionBatch
     models.py            RawLoanRecord (type-coercing, permissive)
@@ -53,6 +56,7 @@ src/fry14_engine/
     registry.py            loads versioned YAML contracts; mirrors into contracts.* tables
     validation_engine.py    per-record check -> every applicable reason code, not just the first
     validation_gateway.py    hashes PII (regardless of pass/fail), then routes: valid -> governed, invalid -> quarantine
+    data_dictionary.py        generates a Markdown field reference straight from a DataContract (Phase 7)
   quarantine/        quarantine record model + append-only store (Phase 2 — done)
   pii/                PII hashing + governed record model/store (Phase 3 — done)
     hashing_service.py     HMAC-SHA256, keyed via env var or explicit key; normalizes before hashing
@@ -81,8 +85,15 @@ src/fry14_engine/
   rbac/                   role-permission matrix + RbacService (Phase 3 — done)
     matrix.py                ROLE_PERMISSION_MATRIX (design doc §2.9 + v2.0 §2.12 additions)
     service.py                RbacService.has_permission / require_permission
-  audit/                   lineage/audit event logging (Phase 7)
-  orchestrator/            pipeline run sequencing (Phase 7)
+  audit/                   lineage/audit event logging (Phase 7 — done)
+    models.py                  AuditEvent
+    store.py                    append-only writer/reader for audit.event_log
+    logger.py                    AuditLogger — the convenience entry point every gateway/service uses
+  orchestrator/            full run sequencing under one pipeline_run_id (Phase 7 — done)
+    models.py                  ChannelSource, PipelineRunReport
+    retry.py                    retry_on_transient_error (linear backoff, configurable exceptions)
+    orchestrator.py               sequences ingestion(N channels)->validation->risk->aggregation->catalog,
+                                   emitting an audit event per stage, all under one pipeline_run_id
   scenario/                Scenario Reference Store + Stress Engine: supervisory scenarios,
                            translation tables, ScenarioSpec, stressed EAD/EL/RWA (Phase 8, C27/C28)
   mcp_server/              MCP Tool Server: typed tool interface over C1-C16, C27, C28 (Phase 9, C23)
@@ -144,24 +155,32 @@ re-run (idempotent `CREATE SCHEMA/TABLE IF NOT EXISTS`).
 fry14 demo
 ```
 
-Generates synthetic commercial loan records, ingests them through both the
-batch-file and event-stream adapters, validates them against the active
-`commercial_loan` contract, hashes PII (HMAC-SHA256) regardless of pass/fail,
-routes each record to the governed store or the quarantine store, computes
-EAD/EL/RWA for every governed record against the active regulatory
-parameter set, aggregates those metrics into schedule-shaped rows
-(reporting period x segment x grade x maturity bucket), updates the data
-product catalog (health score, DQ %, SLA status), then runs one allowed
-query sandbox request (as `FINANCE`) and one denied one (as
-`DATA_ENGINEER`, which has no `QUERY_SANDBOX_READ` permission) to prove the
-RBAC gate actually works. Prints a report covering every stage. This
-exercises the real Phase 0-6 code paths — nothing in the report is mocked
+A single `Orchestrator.run()` call sequences: generate synthetic loan
+records, ingest them through both the batch-file and event-stream
+adapters, validate against the active `commercial_loan` contract (hashing
+PII regardless of pass/fail, routing to the governed or quarantine store),
+compute EAD/EL/RWA for every governed record, aggregate into
+schedule-shaped rows (reporting period x segment x grade x maturity
+bucket), and update the data product catalog (health score, DQ %, SLA
+status) — all under **one `pipeline_run_id`**. The demo then runs one
+allowed query-sandbox request (as `FINANCE`) and one denied one (as
+`DATA_ENGINEER`), and reconstructs the full run from the audit log using
+that same id. Prints a report covering every stage, including the audit
+trail. This exercises the real Phase 0-7 code paths — nothing is mocked
 (the PII hashing key is a hardcoded dev-only default so the demo runs with
 no setup; see `demo.py` for why that's never acceptable outside a demo).
 Options: `--count`, `--bad-rate`, `--seed`, `--db-path` (defaults to
-`data/demo.duckdb`, separate from the main bootstrap DB). Each run appends
-new rows (every zone except aggregates is append-only; aggregates upsert
-by design, so re-running the same reporting period updates it in place).
+`data/demo.duckdb`, separate from the main bootstrap DB). See
+[`RUNBOOK.md`](RUNBOOK.md) for how to interpret the output and reconstruct
+a run from its `pipeline_run_id` outside the demo.
+
+```bash
+fry14 data-dictionary
+```
+
+Prints a Markdown field reference generated directly from the active
+contract's definitions — never hand-maintained, so it can't drift from
+what's actually enforced.
 
 ## Run tests
 
@@ -220,11 +239,25 @@ This repo implements the **v2.0 (agentic)** spec. Of the full 12-phase plan
   allowance, the "Operational Dashboard" for this phase is the `fry14 demo`
   report (a documented "UI-equivalent"), not a web UI — no HTTP/API layer
   has been built in any phase so far.
-- Phase 7 (cross-cutting hardening: lineage/audit wiring, orchestrator,
-  end-to-end perf pass) remains the deterministic-engine build-out.
+- **Phase 7 complete**: the Lineage & Audit Log Service (`audit.event_log`,
+  one `AuditLogger.log()` call per stage, reconstructable end-to-end from
+  `pipeline_run_id` alone) and a real `Orchestrator` that sequences every
+  stage — multi-channel ingestion, validation/PII/governance, risk
+  calculation, aggregation, catalog update — under **one** `pipeline_run_id`
+  (replacing `demo.py`'s earlier ad-hoc per-stage ids), with retry-on-
+  transient-failure at each stage. A capstone end-to-end test verifies the
+  full chain reconciles through every layer by that one id, plus a reduced-
+  scale (5,000-record) performance smoke test. **A genuine ~100x
+  performance bug was found and fixed while building that smoke test**:
+  DuckDB's Python `executemany` has very high per-call overhead; every
+  store now uses a single multi-row `INSERT` instead (see
+  `common/db_helpers.py` and `RUNBOOK.md` §6) — 5,000 records went from a
+  failing 60s+ to ~8s. Documentation pass: `RUNBOOK.md` (run/interpret/
+  troubleshoot/reconstruct-a-run) and a contract-generated data dictionary
+  (`fry14 data-dictionary`).
 - **Phase 8 is the earliest agentic-layer phase** (Scenario Reference Data &
   Stress Engine); it depends only on Phase 4 (complete) and can run in
-  parallel with Phases 5–6 (both now complete). Phases 9–12 (MCP
+  parallel with Phases 5–7 (all now complete). Phases 9–12 (MCP
   server/policy/audit, agent runtime + AG-1/AG-2, AG-3/AG-4/AG-5 + UI,
   evaluation/red-teaming) follow in sequence after Phase 8.
 

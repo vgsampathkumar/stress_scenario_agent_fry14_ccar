@@ -13,6 +13,7 @@ from __future__ import annotations
 import duckdb
 
 from fry14_engine.aggregation.models import ScheduleAggregate
+from fry14_engine.common.db_helpers import execute_bulk_insert
 
 _COLUMNS = [
     "reporting_period",
@@ -27,9 +28,9 @@ _COLUMNS = [
     "pipeline_run_id",
 ]
 
-_UPSERT_SQL = f"""
+_UPSERT_SQL_TEMPLATE = f"""
     INSERT INTO aggregates.schedule_aggregate ({", ".join(_COLUMNS)})
-    VALUES ({", ".join("?" for _ in _COLUMNS)})
+    VALUES {{values}}
     ON CONFLICT (reporting_period, portfolio_segment, credit_rating_grade,
                  remaining_maturity_bucket, schema_version)
     DO UPDATE SET
@@ -64,7 +65,7 @@ class AggregationStore:
             ]
             for a in aggregates
         ]
-        self._connection.executemany(_UPSERT_SQL, rows)
+        execute_bulk_insert(self._connection, _UPSERT_SQL_TEMPLATE, rows)
         return len(rows)
 
     def read_by_reporting_period(

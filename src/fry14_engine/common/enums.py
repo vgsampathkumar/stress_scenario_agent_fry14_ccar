@@ -95,3 +95,18 @@ class AgentId(StrEnum):
     AG3_STRESS_SCENARIO = "AG-3"
     AG4_EXECUTIVE_REPORTING = "AG-4"
     AG5_DATA_PRODUCT_CONCIERGE = "AG-5"
+
+
+class AuditEventType(StrEnum):
+    """Lineage & Audit Log Service (C15) event categories — every stage of
+    a pipeline run, plus access-control decisions. See
+    02-design-document.md §3.10 and schemas/010_audit.sql."""
+
+    INGESTION = "INGESTION"
+    VALIDATION = "VALIDATION"
+    PII_HASH = "PII_HASH"
+    CALCULATION = "CALCULATION"
+    AGGREGATION = "AGGREGATION"
+    CATALOG_UPDATE = "CATALOG_UPDATE"
+    ACCESS_CONTROL = "ACCESS_CONTROL"
+    ORCHESTRATION = "ORCHESTRATION"

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import duckdb
 
+from fry14_engine.common.db_helpers import execute_bulk_insert
 from fry14_engine.risk_engine.models import CalculationException, LoanRiskMetrics
 
 _METRICS_COLUMNS = [
@@ -23,15 +24,15 @@ _METRICS_COLUMNS = [
     "pipeline_run_id",
 ]
 
-_METRICS_INSERT_SQL = f"""
+_METRICS_INSERT_SQL_TEMPLATE = f"""
     INSERT INTO metrics.loan_risk_metrics ({", ".join(_METRICS_COLUMNS)})
-    VALUES ({", ".join("?" for _ in _METRICS_COLUMNS)})
+    VALUES {{values}}
 """
 
-_EXCEPTION_INSERT_SQL = """
+_EXCEPTION_INSERT_SQL_TEMPLATE = """
     INSERT INTO metrics.calculation_exception
         (exception_id, loan_id, pipeline_run_id, reason_code, detail)
-    VALUES (?, ?, ?, ?, ?)
+    VALUES {values}
 """
 
 
@@ -59,7 +60,7 @@ class RiskMetricsStore:
             ]
             for m in metrics
         ]
-        self._connection.executemany(_METRICS_INSERT_SQL, rows)
+        execute_bulk_insert(self._connection, _METRICS_INSERT_SQL_TEMPLATE, rows)
         return len(rows)
 
     def read_by_pipeline_run_id(self, pipeline_run_id: str) -> list[LoanRiskMetrics]:
@@ -77,5 +78,5 @@ class RiskMetricsStore:
             [e.exception_id, e.loan_id, e.pipeline_run_id, e.reason_code, e.detail]
             for e in exceptions
         ]
-        self._connection.executemany(_EXCEPTION_INSERT_SQL, rows)
+        execute_bulk_insert(self._connection, _EXCEPTION_INSERT_SQL_TEMPLATE, rows)
         return len(rows)

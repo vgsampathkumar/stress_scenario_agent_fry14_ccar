@@ -16,8 +16,9 @@ import duckdb
 
 from fry14_engine.aggregation.models import ScheduleAggregate
 from fry14_engine.aggregation.store import AggregationStore
-from fry14_engine.common.enums import Permission, RoleName
-from fry14_engine.rbac.service import RbacService
+from fry14_engine.audit.logger import AuditLogger
+from fry14_engine.common.enums import AuditEventType, Permission, RoleName
+from fry14_engine.rbac.service import PermissionDeniedError, RbacService
 
 
 class QuerySandboxService:
@@ -28,6 +29,7 @@ class QuerySandboxService:
     ) -> None:
         self._aggregation_store = AggregationStore(connection)
         self._rbac_service = rbac_service or RbacService()
+        self._audit_logger = AuditLogger(connection)
 
     def query_schedule(
         self, role: RoleName, reporting_period: str, schema_version: str
@@ -35,6 +37,30 @@ class QuerySandboxService:
         """Raises `PermissionDeniedError` (fry14_engine.rbac.service) if
         `role` lacks `QUERY_SANDBOX_READ` — callers should let that
         propagate (or catch it) rather than pre-checking, so the denial is
-        enforced in exactly one place."""
-        self._rbac_service.require_permission(role, Permission.QUERY_SANDBOX_READ)
+        enforced in exactly one place. Every decision — allow or deny — is
+        recorded to the audit log (sandbox queries aren't part of a
+        pipeline run, so `pipeline_run_id` is always null here)."""
+        try:
+            self._rbac_service.require_permission(role, Permission.QUERY_SANDBOX_READ)
+        except PermissionDeniedError:
+            self._audit_logger.log(
+                AuditEventType.ACCESS_CONTROL,
+                actor=str(role),
+                detail={
+                    "permission": str(Permission.QUERY_SANDBOX_READ),
+                    "decision": "DENIED",
+                    "reporting_period": reporting_period,
+                },
+            )
+            raise
+
+        self._audit_logger.log(
+            AuditEventType.ACCESS_CONTROL,
+            actor=str(role),
+            detail={
+                "permission": str(Permission.QUERY_SANDBOX_READ),
+                "decision": "ALLOWED",
+                "reporting_period": reporting_period,
+            },
+        )
         return self._aggregation_store.read_by_reporting_period(reporting_period, schema_version)
