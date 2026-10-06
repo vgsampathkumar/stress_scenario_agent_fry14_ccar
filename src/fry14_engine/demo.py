@@ -1,11 +1,10 @@
-"""End-to-end demo of the engine as built so far: generates synthetic loan
-records, ingests them via both the batch-file and event-stream adapters,
-validates them against the active `commercial_loan` contract, hashes PII,
-routes to the governed or quarantine store, computes EAD/EL/RWA for every
-governed record, aggregates those metrics into schedule-shaped rows,
-updates the data product catalog, and demonstrates the RBAC-scoped query
-sandbox (one allowed query, one denied). This exercises exactly the real
-code paths built in Phases 0-6 — nothing here is mocked or hardcoded for
+"""End-to-end demo of the engine as built so far: a single `Orchestrator.run()`
+call sequences synthetic loan ingestion (batch file + event stream),
+contract validation, PII hashing, risk calculation, aggregation, and
+catalog update under one `pipeline_run_id` — then demonstrates the
+RBAC-scoped query sandbox (one allowed query, one denied) and reconstructs
+the full run from the audit log. This exercises exactly the real code
+paths built in Phases 0-7 — nothing here is mocked or hardcoded for
 display purposes.
 """
 
@@ -13,27 +12,22 @@ from __future__ import annotations
 
 import tempfile
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
-from fry14_engine.aggregation.gateway import AggregationGateway, AggregationRunResult
-from fry14_engine.catalog.gateway import CatalogGateway, CatalogUpdateResult
+from fry14_engine.audit.logger import AuditLogger
+from fry14_engine.audit.models import AuditEvent
 from fry14_engine.catalog.query_sandbox import QuerySandboxService
-from fry14_engine.common.enums import IngestionChannel, RoleName
-from fry14_engine.common.ids import new_pipeline_run_id
-from fry14_engine.common.metadata import MetadataStamper
+from fry14_engine.common.enums import RoleName
 from fry14_engine.contracts.registry import ContractRegistry
-from fry14_engine.contracts.validation_gateway import ValidationGateway, ValidationRunResult
 from fry14_engine.db import REPO_ROOT, bootstrap, get_connection
 from fry14_engine.ingestion.batch_file_adapter import BatchFileAdapter
 from fry14_engine.ingestion.event_stream_adapter import EventStreamAdapter, InMemoryEventSource
-from fry14_engine.ingestion.gateway import IngestionGateway, IngestionRunResult
-from fry14_engine.pii.governed_store import GovernedStore
+from fry14_engine.orchestrator.models import ChannelSource, PipelineRunReport
+from fry14_engine.orchestrator.orchestrator import Orchestrator
 from fry14_engine.pii.hashing_service import PIIHashingService
 from fry14_engine.rbac.service import PermissionDeniedError
-from fry14_engine.risk_engine.engine import RiskCalculationRunResult
-from fry14_engine.risk_engine.gateway import RiskCalculationGateway
 from fry14_engine.synthetic.generator import generate_loan_records
 from fry14_engine.synthetic.writers import write_csv
 
@@ -56,13 +50,9 @@ class SandboxDemo:
 @dataclass
 class DemoResult:
     db_path: Path
-    batch_ingest: IngestionRunResult
-    event_ingest: IngestionRunResult
-    validation: ValidationRunResult
-    risk_calculation: RiskCalculationRunResult
-    aggregation: AggregationRunResult
-    catalog: CatalogUpdateResult
+    report: PipelineRunReport
     sandbox: SandboxDemo
+    audit_events: list[AuditEvent]
     contract_id: str
     contract_version: str
 
@@ -74,16 +64,13 @@ def run_demo(
     db_path: Path | str = DEFAULT_DEMO_DB_PATH,
     reporting_period: str | None = None,
 ) -> DemoResult:
-    """Run the Phase 0-6 pipeline once and return a structured result.
+    """Run the Phase 0-7 pipeline once, via the real `Orchestrator`, and
+    return a structured result.
 
     Splits `count` records 75/25 between the batch-file channel and the
-    event-stream channel, so both ingestion adapters are genuinely
-    exercised, validates the combined set against the active
-    `commercial_loan` contract (hashing PII and routing to the governed or
-    quarantine store), computes EAD/EL/RWA for every governed record as of
-    `reporting_period` (defaults to the current month), aggregates those
-    metrics into schedule-shaped rows, updates the data product catalog,
-    and runs one allowed and one denied query sandbox request.
+    event-stream channel — both feed the *same* `pipeline_run_id`, so the
+    whole run (landing, quarantine, governed, metrics, aggregates, catalog,
+    audit log) is traceable from that one id.
     """
     db_path = Path(db_path)
     reporting_period = reporting_period or datetime.now(UTC).strftime("%Y-%m")
@@ -101,72 +88,45 @@ def run_demo(
         start_index=batch_count,  # non-overlapping loan_ids vs. the batch channel
     )
 
+    registry = ContractRegistry(REPO_ROOT / "config" / "contracts", connection=connection)
+    contract = registry.get_active("commercial_loan")
+
+    pii_hashing_service = PIIHashingService(_DEMO_INSECURE_DEFAULT_HASH_KEY)
+    data_product_id = f"{contract.contract_id}.schedule"
+    orchestrator = Orchestrator(connection, contract, pii_hashing_service, data_product_id)
+
     with tempfile.TemporaryDirectory() as tmp_dir:
         csv_path = Path(tmp_dir) / "loan_extract.csv"
         write_csv(batch_raw, csv_path)
 
-        batch_run_id = new_pipeline_run_id()
-        batch_adapter = BatchFileAdapter(csv_path, source_system_of_record="CORE_LOAN_SYSTEM")
-        batch_stamper = MetadataStamper(
-            pipeline_run_id=batch_run_id,
-            source_entity_code="ENTITY_001",
-            source_system_of_record="CORE_LOAN_SYSTEM",
-            ingestion_channel=IngestionChannel.BATCH,
-        )
-        ingestion_gateway = IngestionGateway(connection)
-        batch_ingest = ingestion_gateway.run(batch_adapter, batch_stamper)
-
         event_source = InMemoryEventSource()
         for record in event_raw:
             event_source.publish(record)
-        event_run_id = new_pipeline_run_id()
-        event_adapter = EventStreamAdapter(
-            event_source, source_system_of_record="CREDIT_PERFORMANCE_FEED"
-        )
-        event_stamper = MetadataStamper(
-            pipeline_run_id=event_run_id,
-            source_entity_code="ENTITY_001",
-            source_system_of_record="CREDIT_PERFORMANCE_FEED",
-            ingestion_channel=IngestionChannel.EVENT,
-        )
-        event_ingest = ingestion_gateway.run(event_adapter, event_stamper)
 
-    registry = ContractRegistry(REPO_ROOT / "config" / "contracts", connection=connection)
-    contract = registry.get_active("commercial_loan")
-
-    stamped_records = batch_ingest.stamped_records + event_ingest.stamped_records
-    validation_run_id = new_pipeline_run_id()
-    pii_hashing_service = PIIHashingService(_DEMO_INSECURE_DEFAULT_HASH_KEY)
-    validation_gateway = ValidationGateway(connection, pii_hashing_service)
-    validation = validation_gateway.run(stamped_records, contract, validation_run_id)
-
-    governed_records = GovernedStore(connection).read_by_pipeline_run_id(validation_run_id)
-    risk_run_id = new_pipeline_run_id()
-    risk_calculation_gateway = RiskCalculationGateway(connection)
-    risk_calculation = risk_calculation_gateway.run(governed_records, reporting_period, risk_run_id)
-
-    aggregation_gateway = AggregationGateway(connection)
-    aggregation = aggregation_gateway.run(risk_run_id)
-
-    data_product_id = f"{contract.contract_id}.schedule"
-    catalog_gateway = CatalogGateway(connection)
-    catalog = catalog_gateway.update_after_run(
-        data_product_id=data_product_id,
-        pipeline_run_id=risk_run_id,
-        dq_pass_percentage=validation.dq_pass_rate * 100,
-        run_completed_at=datetime.now(UTC),
-        output_schema_version=aggregation.schema_version,
-        output_schema_effective_date=date.today(),
-    )
+        channels = [
+            ChannelSource(
+                adapter=BatchFileAdapter(csv_path, source_system_of_record="CORE_LOAN_SYSTEM"),
+                source_entity_code="ENTITY_001",
+                source_system_of_record="CORE_LOAN_SYSTEM",
+            ),
+            ChannelSource(
+                adapter=EventStreamAdapter(
+                    event_source, source_system_of_record="CREDIT_PERFORMANCE_FEED"
+                ),
+                source_entity_code="ENTITY_001",
+                source_system_of_record="CREDIT_PERFORMANCE_FEED",
+            ),
+        ]
+        report = orchestrator.run(channels, reporting_period)
 
     sandbox_service = QuerySandboxService(connection)
     allowed_rows = sandbox_service.query_schedule(
-        RoleName.FINANCE, reporting_period, aggregation.schema_version
+        RoleName.FINANCE, reporting_period, report.aggregation.schema_version
     )
     denied_as_expected = False
     try:
         sandbox_service.query_schedule(
-            RoleName.DATA_ENGINEER, reporting_period, aggregation.schema_version
+            RoleName.DATA_ENGINEER, reporting_period, report.aggregation.schema_version
         )
     except PermissionDeniedError:
         denied_as_expected = True
@@ -177,17 +137,15 @@ def run_demo(
         denied_as_expected=denied_as_expected,
     )
 
+    audit_events = AuditLogger(connection).read_run(report.pipeline_run_id)
+
     connection.close()
 
     return DemoResult(
         db_path=db_path,
-        batch_ingest=batch_ingest,
-        event_ingest=event_ingest,
-        validation=validation,
-        risk_calculation=risk_calculation,
-        aggregation=aggregation,
-        catalog=catalog,
+        report=report,
         sandbox=sandbox,
+        audit_events=audit_events,
         contract_id=contract.contract_id,
         contract_version=contract.version,
     )
@@ -196,41 +154,39 @@ def run_demo(
 def format_report(result: DemoResult) -> str:
     lines: list[str] = []
     w = lines.append
+    report = result.report
 
     w("=" * 64)
-    w("FR Y-14 ENGINE DEMO - Phases 0-6 (ingestion through catalog/sandbox)")
+    w("FR Y-14 ENGINE DEMO - Phases 0-7 (full pipeline via Orchestrator)")
     w("=" * 64)
     w("")
     w(f"Database: {result.db_path}")
+    w(f"Pipeline run id: {report.pipeline_run_id}")
     w("")
     w("-- Ingestion " + "-" * 51)
-    w(
-        f"  Batch file adapter   : {result.batch_ingest.records_landed:>4} records landed"
-        f"  (run {result.batch_ingest.pipeline_run_id[:8]}..., "
-        f"{len(result.batch_ingest.parse_errors)} parse errors)"
-    )
-    w(
-        f"  Event stream adapter : {result.event_ingest.records_landed:>4} records landed"
-        f"  (run {result.event_ingest.pipeline_run_id[:8]}..., "
-        f"{len(result.event_ingest.parse_errors)} parse errors)"
-    )
+    for ingestion in report.ingestion_results:
+        w(
+            f"  {ingestion.records_landed:>4} records landed, "
+            f"{len(ingestion.parse_errors)} parse errors"
+        )
     w("")
     w("-- Contract validation + PII governance " + "-" * 23)
+    validation = report.validation
     w(f"  Contract: {result.contract_id} v{result.contract_version}")
-    w(f"  Total records     : {result.validation.total_count}")
-    w(f"  Governed (hashed) : {result.validation.governed_count}")
-    w(f"  Quarantined       : {result.validation.quarantined_count}")
-    w(f"  DQ pass rate      : {result.validation.dq_pass_rate:.1%}")
+    w(f"  Total records     : {validation.total_count}")
+    w(f"  Governed (hashed) : {validation.governed_count}")
+    w(f"  Quarantined       : {validation.quarantined_count}")
+    w(f"  DQ pass rate      : {validation.dq_pass_rate:.1%}")
     w("")
-    if result.validation.reason_code_counts:
+    if validation.reason_code_counts:
         w("  Quarantine reason codes:")
-        for code, n in sorted(result.validation.reason_code_counts.items(), key=lambda kv: -kv[1]):
+        for code, n in sorted(validation.reason_code_counts.items(), key=lambda kv: -kv[1]):
             w(f"    {code:<28} {n:>4}")
     else:
         w("  No quarantined records.")
     w("")
     w("-- Risk metric calculation " + "-" * 37)
-    rc = result.risk_calculation
+    rc = report.risk_calculation
     w(f"  Reporting period        : {rc.reporting_period}")
     w(f"  Regulatory parameters   : v{rc.regulatory_parameter_version}")
     w(f"  Loans calculated        : {len(rc.metrics)}")
@@ -242,22 +198,15 @@ def format_report(result: DemoResult) -> str:
         w(f"  Total EAD               : {total_ead:>18,.2f}")
         w(f"  Total EL                : {total_el:>18,.2f}")
         w(f"  Total RWA               : {total_rwa:>18,.2f}")
-    if rc.exceptions:
-        w("  Calculation exception reason codes:")
-        counts: dict[str, int] = {}
-        for exc in rc.exceptions:
-            counts[exc.reason_code] = counts.get(exc.reason_code, 0) + 1
-        for code, n in sorted(counts.items(), key=lambda kv: -kv[1]):
-            w(f"    {code:<28} {n:>4}")
     w("")
     w("-- Schedule aggregation " + "-" * 41)
-    agg = result.aggregation
+    agg = report.aggregation
     w(f"  Schema version           : v{agg.schema_version}")
     w(f"  Input metric rows        : {agg.input_metric_count}")
     w(f"  Aggregate rows produced  : {len(agg.aggregates)}")
     w("")
     w("-- Data product catalog " + "-" * 41)
-    entry = result.catalog.entry
+    entry = report.catalog.entry
     w(f"  Data product             : {entry.data_product_id}")
     w(f"  Health score              : {entry.health_score}")
     w(f"  DQ pass %                 : {entry.dq_pass_percentage}")
@@ -271,10 +220,15 @@ def format_report(result: DemoResult) -> str:
         f"{'DENIED as expected' if sb.denied_as_expected else 'UNEXPECTEDLY ALLOWED'}"
     )
     w("")
+    w("-- Audit trail (reconstructed from pipeline_run_id) " + "-" * 12)
+    w(f"  Events recorded: {len(result.audit_events)}")
+    for event in result.audit_events:
+        w(f"    {event.event_type}")
+    w("")
     w("=" * 64)
     w(
-        "Note: the catalog entry and sandbox results above are produced by the"
-        " real CatalogGateway/QuerySandboxService, not hardcoded. Phase 7+"
-        " (lineage/audit wiring, orchestrator, perf pass) isn't built yet."
+        "Note: the entire run above was sequenced by one Orchestrator.run() call"
+        " under a single pipeline_run_id - every stage's output, and the audit"
+        " trail reconstructing it, trace back to that one id."
     )
     return "\n".join(lines)

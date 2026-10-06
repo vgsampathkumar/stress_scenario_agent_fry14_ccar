@@ -12,6 +12,7 @@ from typing import Any
 
 import duckdb
 
+from fry14_engine.common.db_helpers import execute_bulk_insert
 from fry14_engine.common.ids import new_record_id
 from fry14_engine.ingestion.stamped import StampedRecord
 
@@ -39,9 +40,9 @@ _COLUMNS = [
     "ingestion_channel",
 ]
 
-_INSERT_SQL = f"""
+_INSERT_SQL_TEMPLATE = f"""
     INSERT INTO landing.raw_loan_record ({", ".join(_COLUMNS)})
-    VALUES ({", ".join("?" for _ in _COLUMNS)})
+    VALUES {{values}}
 """
 
 
@@ -54,7 +55,7 @@ class LandingStore:
         if not stamped_records:
             return 0
         rows = [self._to_row(stamped) for stamped in stamped_records]
-        self._connection.executemany(_INSERT_SQL, rows)
+        execute_bulk_insert(self._connection, _INSERT_SQL_TEMPLATE, rows)
         return len(rows)
 
     @staticmethod

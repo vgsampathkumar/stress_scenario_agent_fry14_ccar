@@ -10,13 +10,14 @@ import json
 
 import duckdb
 
+from fry14_engine.common.db_helpers import execute_bulk_insert
 from fry14_engine.quarantine.models import QuarantineRecord
 
-_INSERT_SQL = """
+_INSERT_SQL_TEMPLATE = """
     INSERT INTO quarantine.quarantine_record
         (quarantine_id, loan_id, pipeline_run_id, contract_id, contract_version,
          original_record, exception_reason_codes, rejected_at, remediation_status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES {values}
 """
 
 
@@ -41,5 +42,5 @@ class QuarantineStore:
             ]
             for record in records
         ]
-        self._connection.executemany(_INSERT_SQL, rows)
+        execute_bulk_insert(self._connection, _INSERT_SQL_TEMPLATE, rows)
         return len(rows)

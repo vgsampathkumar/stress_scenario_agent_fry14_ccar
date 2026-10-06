@@ -7,6 +7,9 @@ from pathlib import Path
 import typer
 
 from fry14_engine import __version__
+from fry14_engine.contracts.data_dictionary import generate_data_dictionary
+from fry14_engine.contracts.registry import ContractRegistry
+from fry14_engine.db import REPO_ROOT
 from fry14_engine.demo import DEFAULT_DEMO_DB_PATH, format_report, run_demo
 
 app = typer.Typer(help="Governed Agentic Data Product Orchestrator (FR Y-14 / CCAR)")
@@ -35,6 +38,18 @@ def demo(
     real engine code - nothing is mocked for this command."""
     result = run_demo(count=count, bad_record_rate=bad_rate, seed=seed, db_path=db_path)
     typer.echo(format_report(result))
+
+
+@app.command("data-dictionary")
+def data_dictionary(
+    contract_id: str = typer.Option("commercial_loan", help="Contract to document."),
+) -> None:
+    """Print a Markdown data dictionary generated directly from the active
+    contract's field definitions — never hand-maintained, so it can't
+    drift from what's actually enforced."""
+    registry = ContractRegistry(REPO_ROOT / "config" / "contracts")
+    contract = registry.get_active(contract_id)
+    typer.echo(generate_data_dictionary(contract))
 
 
 if __name__ == "__main__":
