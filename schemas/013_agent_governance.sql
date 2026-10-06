@@ -32,6 +32,10 @@ CREATE TABLE IF NOT EXISTS agent_governance.agent_proposal (
     proposal_id              VARCHAR PRIMARY KEY,   -- uuid
     proposing_agent            VARCHAR NOT NULL,
     session_id                   VARCHAR NOT NULL,
+    requested_by                   VARCHAR NOT NULL,   -- user who initiated the session; four-eyes
+                                                         -- compares the approver against this, not
+                                                         -- against proposing_agent (the agent holds
+                                                         -- no identity of its own to approve/reject)
     proposal_type                  VARCHAR NOT NULL
         CHECK (proposal_type IN ('REMEDIATION_RULE', 'CONTRACT_AMENDMENT',
                                   'PUBLISH_OVERRIDE', 'NARRATIVE_RELEASE', 'SOURCE_TICKET')),
@@ -57,6 +61,10 @@ CREATE TABLE IF NOT EXISTS agent_governance.agent_trace_event (
         CHECK (event_type IN ('USER_REQUEST', 'PLAN', 'TOOL_CALL', 'TOOL_RESULT',
                                'POLICY_DECISION', 'PROPOSAL', 'APPROVAL', 'RESPONSE',
                                'GROUNDING_CHECK', 'ERROR')),
+    tool_name                          VARCHAR,            -- set on TOOL_CALL/TOOL_RESULT/
+                                                             -- POLICY_DECISION events; lets the PEP
+                                                             -- enforce ToolPolicy.max_calls_per_session
+                                                             -- without parsing payload_ref
     payload_ref                        VARCHAR,            -- pointer + hash; payloads are PII-free
     model_id                             VARCHAR,
     prompt_template_version                 VARCHAR,
@@ -69,6 +77,48 @@ CREATE TABLE IF NOT EXISTS agent_governance.agent_trace_event (
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_trace_session ON agent_governance.agent_trace_event (session_id);
+
+-- Tool catalog seed data (requirements.md §3.3). Illustrative agent
+-- ownership per §3.1/§3.2: AG-1 (pipeline ops), AG-2 (DQ triage), AG-3
+-- (stress scenario), AG-5 (data product concierge). `get_catalog_status`
+-- and `get_lineage` are "cross-cutting" per the catalog table — every
+-- agent may read them. `apply_remediation` has an empty allowed_agents
+-- list: HUMAN_ONLY per §3.4, never callable by any agent regardless of
+-- autonomy. See 02-design-document.md §3.13-§3.14.
+INSERT INTO agent_governance.tool_policy
+    (tool_name, required_permission, autonomy, allowed_agents, max_calls_per_session)
+SELECT * FROM (VALUES
+    ('ingest_batch', 'RUN_PIPELINE', 'AUTONOMOUS', ['AG-1'], 10),
+    ('ingest_event', 'RUN_PIPELINE', 'AUTONOMOUS', ['AG-1'], 10),
+    ('validate_against_contract', 'RUN_PIPELINE', 'AUTONOMOUS', ['AG-1'], 10),
+    ('get_quarantine_summary', 'REMEDIATE_QUARANTINE', 'AUTONOMOUS', ['AG-2'], NULL),
+    ('propose_remediation', 'REMEDIATE_QUARANTINE', 'PROPOSE', ['AG-2'], 10),
+    ('apply_remediation', 'REMEDIATE_QUARANTINE', 'HUMAN_ONLY', [], NULL),
+    ('propose_contract_change', 'MANAGE_CONTRACTS', 'PROPOSE', ['AG-2'], 5),
+    ('calculate_risk_metrics', 'RUN_PIPELINE', 'AUTONOMOUS', ['AG-1'], 10),
+    ('aggregate_schedules', 'RUN_PIPELINE', 'AUTONOMOUS', ['AG-1'], 10),
+    ('publish_data_product', 'PUBLISH_DATA_PRODUCT', 'AUTONOMOUS', ['AG-1'], 10),
+    ('build_scenario_spec', 'RUN_STRESS_SCENARIO', 'AUTONOMOUS', ['AG-3'], 20),
+    ('run_stress_scenario', 'RUN_STRESS_SCENARIO', 'CONFIRM', ['AG-3'], 5),
+    ('query_sandbox', 'QUERY_SANDBOX_READ', 'AUTONOMOUS', ['AG-5'], NULL),
+    ('get_catalog_status', 'VIEW_CATALOG', 'AUTONOMOUS',
+     ['AG-1', 'AG-2', 'AG-3', 'AG-4', 'AG-5'], NULL),
+    ('get_lineage', 'VIEW_CATALOG', 'AUTONOMOUS',
+     ['AG-1', 'AG-2', 'AG-3', 'AG-4', 'AG-5'], NULL)
+) AS v(tool_name, required_permission, autonomy, allowed_agents, max_calls_per_session)
+WHERE NOT EXISTS (SELECT 1 FROM agent_governance.tool_policy WHERE tool_name = v.tool_name);
+
+-- Conditional escalation example from design doc §3.14: publish is
+-- AUTONOMOUS by default but escalates to PROPOSE (human approval) when
+-- the run's DQ pass rate is below the catalog threshold.
+INSERT INTO agent_governance.tool_policy_condition (tool_name, condition_id, expression, escalate_to)
+SELECT * FROM (VALUES
+    ('publish_data_product', 1, 'dq_pass_rate_below_threshold', 'PROPOSE')
+) AS v(tool_name, condition_id, expression, escalate_to)
+WHERE NOT EXISTS (
+    SELECT 1 FROM agent_governance.tool_policy_condition
+    WHERE tool_name = v.tool_name AND condition_id = v.condition_id
+);
 
 CREATE TABLE IF NOT EXISTS agent_governance.grounded_narrative (
     narrative_id              VARCHAR PRIMARY KEY,   -- uuid
