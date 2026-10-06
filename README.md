@@ -94,8 +94,18 @@ src/fry14_engine/
     retry.py                    retry_on_transient_error (linear backoff, configurable exceptions)
     orchestrator.py               sequences ingestion(N channels)->validation->risk->aggregation->catalog,
                                    emitting an audit event per stage, all under one pipeline_run_id
-  scenario/                Scenario Reference Store + Stress Engine: supervisory scenarios,
-                           translation tables, ScenarioSpec, stressed EAD/EL/RWA (Phase 8, C27/C28)
+  scenario/                Scenario Reference Store + Stress Engine (Phase 8, C27/C28 — done)
+    models.py                  MacroVariable/ScenarioName/TranslationTarget, SupervisoryScenarioSet,
+                                ScenarioTranslationTable, GradePDGrid
+    reference_store.py           loads Fed supervisory scenarios, translation table, grade PD grid
+    spec_models.py                 ScenarioSpec, PortfolioScope, AdhocShock, GradeMigration
+    spec_validator.py                build_scenario_spec: bounds/approval-gate checks, sets classification
+    stress_calculator.py              pure per-(loan, quarter) formulas: Δx, multipliers, stressed PD/LGD/CCF/EAD/EL/RWA
+    input_hash.py                      SHA-256 of a ScenarioSpec's content (excl. scenario_spec_id) -> replay safety
+    engine.py                            StressEngine: applies the calculator across every in-scope loan x quarter
+    run_models.py                          StressedLoanMetrics, ScenarioComparisonRow, ScenarioRunResult
+    spec_store.py, run_store.py              persist/read back scenario.* tables
+    gateway.py                                 StressScenarioGateway: load -> engine.run -> persist, audited
   mcp_server/              MCP Tool Server: typed tool interface over C1-C16, C27, C28 (Phase 9, C23)
   policy/                  Policy Enforcement Point: ToolPolicy eval, autonomy decisions (Phase 9, C24)
   approval_queue/          Approval Queue Service: agent proposals, four-eyes approval routing (Phase 9, C25)
@@ -255,14 +265,46 @@ This repo implements the **v2.0 (agentic)** spec. Of the full 12-phase plan
   failing 60s+ to ~8s. Documentation pass: `RUNBOOK.md` (run/interpret/
   troubleshoot/reconstruct-a-run) and a contract-generated data dictionary
   (`fry14 data-dictionary`).
-- **Phase 8 is the earliest agentic-layer phase** (Scenario Reference Data &
-  Stress Engine); it depends only on Phase 4 (complete) and can run in
-  parallel with Phases 5–7 (all now complete). Phases 9–12 (MCP
-  server/policy/audit, agent runtime + AG-1/AG-2, AG-3/AG-4/AG-5 + UI,
-  evaluation/red-teaming) follow in sequence after Phase 8.
+- **Phase 8 complete**: Scenario Reference Data & the Stress Engine (C27/C28)
+  — the first agentic-layer phase, and explicitly deterministic (no LLM
+  involved anywhere in it). Illustrative, clearly-labeled Fed-style
+  supervisory scenario data (`FED-2026`, `BASELINE`/`SEVERELY_ADVERSE`, 10
+  quarters x 7 macro variables) and an approval-gated `ScenarioTranslationTable`
+  (linear PD/LGD/drawdown betas by segment x asset class, grade-sensitivity
+  scaling, floor/cap multiplier clamps) are seeded the same idempotent way as
+  Phase 4's reference data. `build_scenario_spec` validates a `ScenarioSpec`
+  deterministically — bounds-checks horizon/ad-hoc-shock magnitudes/grade
+  migration, requires an `APPROVED` translation table (raising
+  `ScenarioTableNotApprovedError` otherwise, never a silent fallback), and
+  sets `classification` (`EXPLORATORY` if any ad-hoc shock or grade migration
+  is present, else `SUPERVISORY`). The Stress Engine applies the jump-off-
+  relative shock formula per loan per projection quarter against a **static**
+  balance sheet (balances held at quarter-0 for the whole horizon), producing
+  stressed PD/LGD/CCF/EAD/EL/RWA and baseline-vs-stressed
+  `ScenarioComparisonRow` aggregates. **RWA has no PD term by
+  construction** — a PD-only shock moves EL but leaves EAD and RWA
+  identical across quarters; a drawdown-only shock moves EAD, EL, *and* RWA
+  together (requirement AG-3.5, covered by dedicated tests, not just
+  asserted). Every run's `input_hash` is a SHA-256 of the spec's *content*
+  (excluding its random `scenario_spec_id`), so two independently-built specs
+  with identical parameters replay to byte-identical stressed output — also
+  tested directly. `StressScenarioGateway` wires it all together: loads the
+  governed loans and baseline risk metrics for a `base_pipeline_run_id`,
+  loads the reference data a spec names, runs the engine, persists the full
+  result (`scenario.scenario_spec`, `scenario_run_result`,
+  `stressed_loan_metrics`, `scenario_comparison`), and logs two audit events
+  (new `AuditEventType.STRESS_SCENARIO`) under that same `pipeline_run_id`.
+  The original course-corrected `scenario.scenario_spec` DDL was missing
+  several fields `ScenarioSpec` actually needs (`portfolio_scope`,
+  `adhoc_shocks`, `grade_migration`, etc.) — fixed directly in the schema
+  file since nothing had been persisted yet, same precedent as Phase 3's
+  governed-table nullability fix.
+- Phases 9–12 (MCP server/policy/audit, agent runtime + AG-1/AG-2,
+  AG-3/AG-4/AG-5 + UI, evaluation/red-teaming) follow in sequence after
+  Phase 8.
 
-None of the agentic-layer code (`agent_runtime/`, `mcp_server/`, `policy/`,
-`approval_queue/`, `agent_trace/`, `scenario/`, `grounding/`, `evaluation/`,
+None of the remaining agentic-layer code (`agent_runtime/`, `mcp_server/`,
+`policy/`, `approval_queue/`, `agent_trace/`, `grounding/`, `evaluation/`,
 `pii_egress/`) is implemented yet — those are currently empty placeholder
 packages, same as `contracts/`, `pii/`, `rbac/`, etc. were before Phase 2.
 

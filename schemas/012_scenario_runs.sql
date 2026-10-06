@@ -3,21 +3,33 @@
 -- Engine, C28). loan_id is a plain VARCHAR, not FK'd, mirroring
 -- metrics.loan_risk_metrics.
 
+-- Nested structures (portfolio_scope, adhoc_shocks, grade_migration) are
+-- stored as JSON rather than normalized tables — they're read/written
+-- whole (never queried by sub-field from SQL), same rationale as
+-- quarantine.quarantine_record.original_record.
 CREATE TABLE IF NOT EXISTS scenario.scenario_spec (
     scenario_spec_id        VARCHAR PRIMARY KEY,   -- uuid
     source_request_text       VARCHAR,
     base_scenario               VARCHAR NOT NULL
         CHECK (base_scenario IN ('BASELINE', 'SEVERELY_ADVERSE', 'NONE')),
-    translation_table_version   VARCHAR NOT NULL
+    supervisory_scenario_version VARCHAR,
+    reporting_period              VARCHAR NOT NULL,   -- 'YYYY-MM' of the governed base data
+    portfolio_scope                JSON,                -- {portfolio_segments, asset_classes, credit_grades}
+    adhoc_shocks                     JSON,                -- [{variable, shock_type, magnitude, quarters}]
+    grade_migration                    JSON,               -- {notches, segments} | null
+    horizon_quarters                     INTEGER NOT NULL DEFAULT 9
+        CHECK (horizon_quarters BETWEEN 1 AND 9),
+    translation_table_version              VARCHAR NOT NULL
         REFERENCES scenario.scenario_translation_table (version),
-    classification                VARCHAR NOT NULL
+    regulatory_parameter_version             VARCHAR NOT NULL,
+    classification                             VARCHAR NOT NULL
         CHECK (classification IN ('SUPERVISORY', 'EXPLORATORY')),
-    status                          VARCHAR NOT NULL DEFAULT 'DRAFT'
+    status                                       VARCHAR NOT NULL DEFAULT 'DRAFT'
         CHECK (status IN ('DRAFT', 'NEEDS_CLARIFICATION', 'CONFIRMED', 'EXECUTED', 'REJECTED')),
-    requested_by                      VARCHAR NOT NULL,
-    confirmed_by                        VARCHAR,
-    confirmed_at                          TIMESTAMP,
-    created_at                              TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    requested_by                                   VARCHAR NOT NULL,
+    confirmed_by                                     VARCHAR,
+    confirmed_at                                       TIMESTAMP,
+    created_at                                           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS scenario.scenario_run_result (
