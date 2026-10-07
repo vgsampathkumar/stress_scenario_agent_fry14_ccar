@@ -106,11 +106,31 @@ src/fry14_engine/
     run_models.py                          StressedLoanMetrics, ScenarioComparisonRow, ScenarioRunResult
     spec_store.py, run_store.py              persist/read back scenario.* tables
     gateway.py                                 StressScenarioGateway: load -> engine.run -> persist, audited
-  mcp_server/              MCP Tool Server: typed tool interface over C1-C16, C27, C28 (Phase 9, C23)
-  policy/                  Policy Enforcement Point: ToolPolicy eval, autonomy decisions (Phase 9, C24)
-  approval_queue/          Approval Queue Service: agent proposals, four-eyes approval routing (Phase 9, C25)
-  agent_trace/             Agent Trace Store: sessions, plans, tool calls, policy decisions (Phase 9, C26)
-  pii_egress/              PII Egress Guard: blocks PII leakage in agent-bound outbound payloads (Phase 9, C31)
+  agent_trace/             Agent Trace Store (Phase 9, C26 — done)
+    models.py                  AgentTraceEvent, AgentTraceEventType
+    store.py                     append-only writer/reader for agent_governance.agent_trace_event,
+                                  + count_tool_calls (session-limit enforcement)
+    logger.py                      AgentTraceLogger — convenience entry point, mirrors AuditLogger
+  approval_queue/          Approval Queue Service (Phase 9, C25 — done)
+    models.py                  AgentProposal, ProposalDraft, ProposalType/ProposalStatus
+    store.py                     persist/read back agent_governance.agent_proposal
+    service.py                     ApprovalQueueService: four-eyes + approver-RBAC-gated
+                                    approve/reject, stale-proposal expiry
+  policy/                  Policy Enforcement Point (Phase 9, C24 — done)
+    models.py                  ToolPolicy, ToolPolicyCondition, PolicyDecision/PolicyOutcome
+    store.py                     loads ToolPolicy (+conditions) from agent_governance.tool_policy
+    pep.py                          PolicyEnforcementPoint.decide(): agent-allowlist -> RBAC ->
+                                     condition escalation -> session-limit -> autonomy ->
+                                     always logs a POLICY_DECISION trace event
+  mcp_server/              MCP Tool Server (Phase 9, C23 — done; see its own module docstring
+                           for the 4 catalog tools deliberately deferred to Phase 10+)
+    models.py                  ToolContext (agent/role/session identity), ToolCallResult
+    server.py                    McpToolServer: thin, policy-gated, trace-logged wrappers over
+                                  10 of the 13 §3.3 tools (ingest/validate/calculate/aggregate/
+                                  publish/build+run_stress_scenario/query_sandbox/catalog/lineage)
+  pii_egress/              PII Egress Guard (Phase 9, C31 — done)
+    guard.py                  PiiEgressGuard: recursive SSN/EIN pattern scan over any JSON-like
+                               payload; fail-closed (blocks, never redacts-and-continues)
   agent_runtime/           Agent Runtime: supervisor/specialist graph, checkpointing (Phase 10, C17)
   grounding/               Numeric Grounding Checker: binds narrative figures to tool-output fields (Phase 11, C29)
   evaluation/              Evaluation harness: golden-set scenario/triage/grounding/guardrail tests (Phase 12, C30)
@@ -299,13 +319,55 @@ This repo implements the **v2.0 (agentic)** spec. Of the full 12-phase plan
   `adhoc_shocks`, `grade_migration`, etc.) — fixed directly in the schema
   file since nothing had been persisted yet, same precedent as Phase 3's
   governed-table nullability fix.
-- Phases 9–12 (MCP server/policy/audit, agent runtime + AG-1/AG-2,
-  AG-3/AG-4/AG-5 + UI, evaluation/red-teaming) follow in sequence after
-  Phase 8.
+- **Phase 9 complete**: the MCP Tool Server (C23), Policy Enforcement Point
+  (C24), RBAC extensions (§2.12 — already seeded by the earlier agentic
+  course-correction), Approval Queue Service (C25), Agent Trace Store (C26),
+  and PII Egress Guard (C31) — "tools callable from any MCP client with
+  policy and audit enforced, *before any agent exists*," exactly the plan's
+  own framing. The full 13-tool catalog from requirements.md §3.3 is seeded
+  as `agent_governance.tool_policy` rows (required permission, autonomy
+  level, agent allowlist, session call limit), the same idempotent
+  seed-data convention as every other reference table in this project.
+  `PolicyEnforcementPoint.decide()` is plain code — it never calls an
+  LLM — and runs the full decision chain for every call: deny if the
+  calling agent isn't on the tool's allowlist, deny if the user's RBAC role
+  lacks the required permission, evaluate named boolean conditions (never
+  an evaluated expression string — avoids building an `eval()`-shaped
+  vulnerability) to escalate autonomy, deny once a session hits
+  `max_calls_per_session`, then act on the resolved autonomy
+  (`AUTONOMOUS`→allow, `CONFIRM`→require explicit confirmation first,
+  `PROPOSE`→create an `AgentProposal` and never execute, `HUMAN_ONLY`/
+  `PROHIBITED`→deny) — and always logs a `POLICY_DECISION` trace event,
+  allow or deny. `ApprovalQueueService` enforces four-eyes (the approver
+  must differ from `requested_by`, not from the proposing agent — an
+  agent holds no identity of its own to recuse) and the approver's own
+  RBAC permission before recording a decision; rejections require a
+  reason. `McpToolServer` wraps 10 of the 13 catalog tools as thin,
+  policy-gated, trace-logged calls into the existing Phase 1-8 gateways —
+  `publish_data_product` is the conditional-escalation example from the
+  design doc itself (`AUTONOMOUS` by default, escalates to `PROPOSE` when
+  the run's DQ pass rate is below the catalog threshold, and the catalog
+  is genuinely never touched once escalated — verified by an integration
+  test asserting zero rows). The remaining 3 tools
+  (`get_quarantine_summary`, `propose_remediation`,
+  `propose_contract_change`) plus `apply_remediation` are seeded in the
+  policy catalog (so coverage and testing of the catalog itself is
+  complete) but have no tool wrapper yet — `get_quarantine_summary` is
+  explicitly Phase 10's own deliverable per the implementation plan, and
+  the other three need AG-2 (also Phase 10) to produce proposals worth
+  wrapping; implementing them now would mean faking a tool that does
+  nothing real. `PiiEgressGuard` recursively scans any JSON-like outbound
+  payload for SSN/EIN-shaped strings and blocks (fail-closed) rather than
+  redacting and continuing — its "unexpected-field name/address heuristic"
+  half from the design doc is deferred since it needs contract-specific
+  field knowledge a general-purpose, contract-agnostic guard shouldn't
+  have. 100% test coverage on all five new packages (`agent_trace`,
+  `policy`, `approval_queue`, `mcp_server`, `pii_egress`).
+- Phases 10–12 (agent runtime + AG-1/AG-2, AG-3/AG-4/AG-5 + UI,
+  evaluation/red-teaming) follow in sequence after Phase 9.
 
-None of the remaining agentic-layer code (`agent_runtime/`, `mcp_server/`,
-`policy/`, `approval_queue/`, `agent_trace/`, `grounding/`, `evaluation/`,
-`pii_egress/`) is implemented yet — those are currently empty placeholder
+None of the remaining agentic-layer code (`agent_runtime/`, `grounding/`,
+`evaluation/`) is implemented yet — those are currently empty placeholder
 packages, same as `contracts/`, `pii/`, `rbac/`, etc. were before Phase 2.
 
 **Deferred from Phase 3 (explicitly, per the implementation plan's own
