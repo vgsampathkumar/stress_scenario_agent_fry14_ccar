@@ -32,6 +32,7 @@ _COLUMNS = [
     "pipeline_run_id",
     "contract_version",
     "ingestion_timestamp",
+    "original_quarantine_id",
 ]
 
 _INSERT_SQL_TEMPLATE = f"""
@@ -84,4 +85,5 @@ class GovernedStore:
             record.pipeline_run_id,
             record.contract_version,
             record.ingestion_timestamp,
+            record.original_quarantine_id,
         ]

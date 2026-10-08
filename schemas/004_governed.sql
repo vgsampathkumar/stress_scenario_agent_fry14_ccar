@@ -29,6 +29,12 @@ CREATE TABLE IF NOT EXISTS governed.loan_record (
     contract_version               VARCHAR NOT NULL,
     ingestion_timestamp             TIMESTAMP NOT NULL,
 
+    -- Set only when this row was produced by AG-2's reprocessing flow
+    -- (Phase 10) after an approved remediation — lineage back to the
+    -- quarantine record it superseded. Null for every normal, first-pass
+    -- governed record.
+    original_quarantine_id          VARCHAR,
+
     governed_at                     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 

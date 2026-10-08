@@ -5,16 +5,13 @@ Agent Trace Store (C26) via TOOL_CALL/TOOL_RESULT events, bracketing the
 POLICY_DECISION event the PEP itself writes. See 02-design-document.md
 §3.13.
 
-**Scope note (Phase 9):** of the 13 tools in requirements.md §3.3,
-`get_quarantine_summary`, `propose_remediation`, `propose_contract_change`,
-and `apply_remediation` are deliberately NOT wrapped here — their ToolPolicy
-rows are seeded (so the PEP's policy coverage is complete and testable),
-but no backing service exists yet for any of them. `get_quarantine_summary`
-is explicitly Phase 10's deliverable per 03-implementation-plan.md; the
-other three depend on an agent (AG-2) that doesn't exist yet to produce
-meaningful proposals, and there is no "apply a remediation rule" service
-API in this codebase at all. Wrapping them now would mean faking a tool
-that does nothing real.
+**Scope note (Phase 10):** `apply_remediation` is still not wrapped — it
+is HUMAN_ONLY per the seeded catalog (requirements.md §3.4: "applying
+remediation" may never be agent-callable), so there is deliberately no
+tool method for it at all; AG-2's reprocessing flow (see
+`agent_runtime/ag2_data_quality_triage.py`) calls the underlying stores
+directly, under the *approver's* recorded decision, never through this
+agent-facing tool surface.
 """
 
 from __future__ import annotations
@@ -46,6 +43,8 @@ from fry14_engine.pii.hashing_service import PIIHashingService
 from fry14_engine.policy.models import PolicyOutcome
 from fry14_engine.policy.pep import PolicyEnforcementPoint
 from fry14_engine.policy.store import PolicyStore
+from fry14_engine.quarantine.store import QuarantineStore
+from fry14_engine.quarantine.summary import build_quarantine_summary
 from fry14_engine.rbac.service import RbacService
 from fry14_engine.risk_engine.gateway import RiskCalculationGateway
 from fry14_engine.scenario.gateway import StressScenarioGateway
@@ -84,6 +83,7 @@ class McpToolServer:
         self._audit_logger = AuditLogger(connection)
         self._scenario_reference_store = ScenarioReferenceStore(connection)
         self._stress_scenario_gateway = StressScenarioGateway(connection)
+        self._quarantine_store = QuarantineStore(connection)
 
     # -- 2.1 Ingestion ----------------------------------------------------
 
@@ -244,6 +244,23 @@ class McpToolServer:
                 ctx.user_role, reporting_period, schema_version
             ),
         )
+
+    # -- AG-2 Data quality triage ---------------------------------------------
+
+    def get_quarantine_summary(self, ctx: ToolContext) -> ToolCallResult:
+        return self._invoke(
+            ctx,
+            "get_quarantine_summary",
+            lambda: build_quarantine_summary(self._quarantine_store.read_all()),
+        )
+
+    def propose_remediation(self, ctx: ToolContext, draft: ProposalDraft) -> ToolCallResult:
+        """Always resolves to PROPOSE (the tool's own seeded autonomy) —
+        `fn` is a no-op; the caller's result is `decision.proposal_id`."""
+        return self._invoke(ctx, "propose_remediation", lambda: None, proposal_draft=draft)
+
+    def propose_contract_change(self, ctx: ToolContext, draft: ProposalDraft) -> ToolCallResult:
+        return self._invoke(ctx, "propose_contract_change", lambda: None, proposal_draft=draft)
 
     # -- internals --------------------------------------------------------
 

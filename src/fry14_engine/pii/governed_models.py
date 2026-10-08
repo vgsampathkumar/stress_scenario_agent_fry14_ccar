@@ -32,3 +32,4 @@ class GovernedLoanRecord(BaseModel):
     pipeline_run_id: str
     contract_version: str
     ingestion_timestamp: datetime
+    original_quarantine_id: str | None = None
