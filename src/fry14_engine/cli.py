@@ -7,6 +7,11 @@ from pathlib import Path
 import typer
 
 from fry14_engine import __version__
+from fry14_engine.agent_demo import (
+    DEFAULT_AGENT_DEMO_DB_PATH,
+    format_agent_demo_report,
+    run_agent_demo,
+)
 from fry14_engine.contracts.data_dictionary import generate_data_dictionary
 from fry14_engine.contracts.registry import ContractRegistry
 from fry14_engine.db import REPO_ROOT
@@ -38,6 +43,25 @@ def demo(
     real engine code - nothing is mocked for this command."""
     result = run_demo(count=count, bad_record_rate=bad_rate, seed=seed, db_path=db_path)
     typer.echo(format_report(result))
+
+
+@app.command("agent-demo")
+def agent_demo(
+    count: int = typer.Option(20, help="Clean synthetic loan records to generate."),
+    seed: int = typer.Option(7, help="Random seed, for reproducible demo runs."),
+    db_path: Path = typer.Option(
+        DEFAULT_AGENT_DEMO_DB_PATH, "--db-path", help="DuckDB file to run the agentic demo against."
+    ),
+) -> None:
+    """Run all five agents (AG-1..AG-5) end-to-end through the real
+    policy-enforced MCP tool server and checkpointed Agent Runtime — the
+    CLI form of the "Agent UI" deliverable (see agent_demo.py's own
+    docstring for why this is a documented CLI report, not a web UI, same
+    as `fry14 demo` for Phase 0-7). Only the LLM itself is scripted
+    (fixed, labeled illustrative responses) — no model credentials are
+    wired into this repo."""
+    result = run_agent_demo(db_path=db_path, count=count, seed=seed)
+    typer.echo(format_agent_demo_report(result))
 
 
 @app.command("data-dictionary")
