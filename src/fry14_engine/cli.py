@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
 import typer
@@ -62,6 +64,20 @@ def agent_demo(
     wired into this repo."""
     result = run_agent_demo(db_path=db_path, count=count, seed=seed)
     typer.echo(format_agent_demo_report(result))
+
+
+@app.command()
+def ui() -> None:
+    """Launch the Phase 11 Agent UI (AG-UI-1..4): a Streamlit dashboard
+    over the same `run_agent_demo()` data `fry14 agent-demo` prints as
+    text, plus a live Approval Queue and Agent Trace view. Requires the
+    `ui` extra (`pip install -e ".[ui]"`)."""
+    app_path = Path(__file__).parent / "ui" / "app.py"
+    try:
+        subprocess.run([sys.executable, "-m", "streamlit", "run", str(app_path)], check=True)
+    except FileNotFoundError as exc:
+        typer.echo('Streamlit is not installed. Run: pip install -e ".[ui]"', err=True)
+        raise typer.Exit(1) from exc
 
 
 @app.command("data-dictionary")

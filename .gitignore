@@ -39,3 +39,6 @@ Thumbs.db
 
 # Local tool state (not project source)
 .claude/
+
+# Streamlit runtime log (written to cwd by `fry14 ui` / `streamlit run`)
+streamlit.log
