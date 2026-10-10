@@ -138,7 +138,7 @@ src/fry14_engine/
   pii_egress/              PII Egress Guard (Phase 9, C31 — done)
     guard.py                  PiiEgressGuard: recursive SSN/EIN pattern scan over any JSON-like
                                payload; fail-closed (blocks, never redacts-and-continues)
-  agent_runtime/           Agent Runtime (C17), AG-1 (C18) and AG-2 (C19) (Phase 10 — done)
+  agent_runtime/           Agent Runtime (C17), AG-1..AG-5 (C18-C22) (Phases 10-11 — done)
     models.py                  SessionStatus, AgentSession, RunLimits, LlmClient Protocol
                                 (no concrete implementation in src/ — see its own scope note)
     store.py                     persists/reads checkpointed AgentSession state
@@ -152,11 +152,30 @@ src/fry14_engine/
                                       root-cause hypotheses (structured, cited) -> AgentProposal
                                       -> (after approval) reprocess_after_approval, carrying
                                       original_quarantine_id lineage into the new governed rows
-  grounding/               Numeric Grounding Checker: binds narrative figures to tool-output fields (Phase 11, C29)
+    ag3_stress_scenario.py              StressScenarioAgent (Phase 11): NL -> draft ScenarioSpec ->
+                                        build_scenario_spec -> clarifying question if ambiguous ->
+                                        plain-language confirmation -> run_stress_scenario ->
+                                        deterministic interpret() (never a narrative w/ free numbers)
+    ag4_executive_reporting.py           ExecutiveReportingAgent (Phase 11): drafts a {{token}}-bound
+                                         template, resolves bindings against a real RunReport/
+                                         ScenarioRunResult, runs the Grounding Checker, proposes
+                                         NARRATIVE_RELEASE only if grounding PASSED
+    ag5_data_product_concierge.py         DataProductConciergeAgent (Phase 11): NL question ->
+                                          typed query_sandbox call (no SQL surface at all — see
+                                          its own scope note) under the user's own RBAC
+  grounding/               Numeric Grounding Checker (Phase 11, C29 — done)
+    models.py                  GroundedNarrative, GroundingStatus, GroundingResult
+    checker.py                   GroundingChecker.check(): resolves {{token}} bindings, scans the
+                                  template's own literal text for any unbound number (excluding a
+                                  dates/quarter-labels/regulation-names allowlist) — either failure
+                                  mode sets grounding_status=FAILED and blocks release
+    store.py                     persist/read back agent_governance.grounded_narrative
   evaluation/              Evaluation harness: golden-set scenario/triage/grounding/guardrail tests (Phase 12, C30)
   api/                     FastAPI surface (sandbox, catalog, ingestion endpoints)
   db.py                    DuckDB bootstrap — applies schemas/*.sql
-  demo.py                  `fry14 demo` — runs the real pipeline end-to-end, prints a report
+  demo.py                  `fry14 demo` — runs the real v1.0 pipeline end-to-end, prints a report
+  agent_demo.py            `fry14 agent-demo` — runs all 5 agents end-to-end (the "Agent UI"
+                           deliverable's CLI form — see its own module docstring), prints a report
   cli.py                   `fry14` command-line entry point
 
 schemas/            versioned DDL per logical zone: landing, quarantine, governed,
@@ -183,9 +202,12 @@ pip install -e ".[dev]"
 ```
 
 The `agentic` extra (`pip install -e ".[agentic]"`) adds the Phase 9+ dependencies
-(LangGraph, MCP SDK, Anthropic client, sqlglot, OpenTelemetry, Streamlit) — **not yet installed
-or exercised in this repo**; it's documented in `pyproject.toml` ahead of need. Don't install it
-until Phase 9 actually starts.
+(LangGraph, MCP SDK, Anthropic client, sqlglot, OpenTelemetry, Streamlit) — **still not
+installed or exercised in this repo as of Phase 11**, by deliberate, repeatedly-documented
+choice: the Agent Runtime is plain Python (no graph framework needed), `LlmClient` stays a
+`Protocol` with zero concrete implementations in `src/` (a real model client needs API
+credentials this environment doesn't have), and the "Agent UI" is a CLI report rather than a
+Streamlit/FastAPI app. Install it only once an actual model integration or web UI is in scope.
 
 ## Bootstrap the local database
 
@@ -223,6 +245,24 @@ Options: `--count`, `--bad-rate`, `--seed`, `--db-path` (defaults to
 `data/demo.duckdb`, separate from the main bootstrap DB). See
 [`RUNBOOK.md`](RUNBOOK.md) for how to interpret the output and reconstruct
 a run from its `pipeline_run_id` outside the demo.
+
+```bash
+fry14 agent-demo
+```
+
+Runs all five agents end-to-end through the real `McpToolServer` /
+`PolicyEnforcementPoint` / `AgentRuntime` stack on top of a fresh AG-1 run:
+AG-2 triages and reprocesses a labeled `MISSING_CREDIT_SCORE` cluster, AG-4
+drafts and releases a grounded narrative over the run, AG-3 drafts +
+confirms + runs a Severely Adverse scenario (AG-4 drafts a second grounded
+narrative over it), and AG-5 answers a concierge question — then prints
+the plan, every tool call's outcome, the Approval Queue's pending state,
+and a scenario comparison table (the CLI form of the "Agent UI"
+deliverable; see `agent_demo.py`'s own docstring for why). Only the LLM
+itself is scripted (fixed, labeled-illustrative responses — no model
+credentials are wired into this repo); every number comes from the real
+deterministic engines. Options: `--count`, `--seed`, `--db-path` (defaults
+to `data/agent_demo.duckdb`).
 
 ```bash
 fry14 data-dictionary
@@ -426,12 +466,51 @@ This repo implements the **v2.0 (agentic)** spec. Of the full 12-phase plan
   `generate_negative_balance_entity_batch`) so a correct triage has a
   deterministic ground truth to check against, not just a uniformly-cycled
   mix of defects. 99%+ test coverage on every new/touched module.
-- Phases 11–12 (AG-3/AG-4/AG-5 + UI, evaluation/red-teaming) follow in
-  sequence after Phase 10.
+- **Phase 11 complete**: AG-3 Stress Scenario, the Numeric Grounding
+  Checker (C29) + AG-4 Executive Reporting, AG-5 Data Product Concierge,
+  and the "Agent UI" deliverable. AG-3's flow matches the design doc's own
+  five steps exactly: an LLM drafts a `DraftScenarioRequest`;
+  `build_scenario_spec` validates it deterministically (any
+  `ScenarioSpecValidationError`/`ScenarioTableNotApprovedError`/
+  `ScenarioReferenceNotFoundError` is caught and reported as `REJECTED`,
+  never left to crash the caller); an ambiguous request gets a single
+  clarifying question (`NEEDS_CLARIFICATION`) whose answer threads into a
+  second draft; a plain-language summary waits for explicit confirmation
+  (`run_stress_scenario`'s own seeded `CONFIRM` autonomy from Phase 9
+  enforces this, not a convention); and `interpret()` is a deterministic
+  template over the real `ScenarioRunResult` — AG-3 never writes free-form
+  prose itself, that's AG-4's job. The Numeric Grounding Checker resolves
+  `{{token}}` bindings against a real `RunReport`/`ScenarioRunResult`
+  (rejecting a binding that names the *wrong* run id, not just any run),
+  then scans the template's own literal text for any number that isn't a
+  binding — excluding a small, explicit allowlist (quarter labels, dates,
+  "FR Y-14"/"CCAR") — and fails closed on either an unresolved binding or
+  an unbound number. AG-4 only creates a `NARRATIVE_RELEASE` proposal
+  (via the Approval Queue directly — there's no MCP tool for narrative
+  release in the §3.3 catalog) when grounding passes; a narrative that
+  fails is persisted (for audit) but never proposed. AG-5 keeps Phase 6's
+  `query_sandbox` exactly as built — a typed, parameterized method with no
+  SQL-accepting surface at all — rather than retrofitting the design
+  doc's "generate SQL, then parse and allow-list it" approach, since the
+  existing architecture is structurally stronger (no injection surface to
+  defend in the first place); a dedicated test confirms the concierge's
+  answer is byte-identical to calling `QuerySandboxService` directly with
+  the same parameters. The **Agent UI** deliverable is `fry14 agent-demo`
+  — a documented CLI report (same precedent as Phase 6's "Operational
+  Dashboard") that runs all five agents back to back and prints the plan,
+  every tool call's outcome, the Approval Queue's pending state, and a
+  scenario comparison table; no web UI (Streamlit, FastAPI, etc.) has been
+  built, and the `agentic` extra pulling those dependencies in still isn't
+  installed. Its `ScriptedLlmClient` — fixed, labeled-illustrative
+  structured responses, not a real model call — is the only new "fake" in
+  this phase, and it lives in the demo module, not in `agent_runtime/`
+  itself (`LlmClient` stays a `Protocol` with zero concrete
+  implementations in `src/`). 99%+ test coverage on every new module.
+- Phase 12 (evaluation/red-teaming) follows after Phase 11.
 
-None of the remaining agentic-layer code (`grounding/`, `evaluation/`) is
-implemented yet — those are currently empty placeholder packages, same as
-`contracts/`, `pii/`, `rbac/`, etc. were before Phase 2.
+None of the remaining agentic-layer code (`evaluation/`) is implemented
+yet — it's currently an empty placeholder package, same as `contracts/`,
+`pii/`, `rbac/`, etc. were before Phase 2.
 
 **Deferred from Phase 3 (explicitly, per the implementation plan's own
 "optional/stretch" framing):** the Re-identification Vault (C8). Its DDL
