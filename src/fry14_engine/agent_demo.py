@@ -10,9 +10,11 @@ CLI report rather than a web UI), this demo plays the same role for the
 conversational workspace / Approval Queue / Scenario Comparison views
 requirements.md §3.6 describes: it prints the plan, every tool call's
 outcome, the approval queue's state, and a scenario comparison table — the
-same information a UI would render, just as text. No web UI (Streamlit,
-FastAPI, etc.) has been built in any phase so far, and the `agentic` extra
-pulling those dependencies in is still not installed.
+same information a UI would render, just as text. `fry14_engine.ui.app`
+(Phase 11, `pip install -e ".[ui]"`) now also renders this same data —
+`run_agent_demo()` plus the Approval Queue and Agent Trace stores — as a
+Streamlit dashboard, with live approve/reject wired to the real
+`ApprovalQueueService`.
 
 `ScriptedLlmClient` returns fixed, illustrative structured responses — it
 is not a real model call. It exists only so this command can run with no
@@ -110,6 +112,8 @@ class AgentDemoResult:
     concierge_answer_row_count: int
     concierge_generated_query: str | None
     pending_proposals: list[AgentProposal] = field(default_factory=list)
+    run_session_id: str = ""
+    scenario_session_id: str = ""
 
 
 def run_agent_demo(
@@ -264,6 +268,8 @@ def run_agent_demo(
         concierge_answer_row_count=len(concierge_answer.rows),
         concierge_generated_query=concierge_answer.generated_query,
         pending_proposals=pending_proposals,
+        run_session_id=run_report.session_id,
+        scenario_session_id=drafted.session_id,
     )
 
 

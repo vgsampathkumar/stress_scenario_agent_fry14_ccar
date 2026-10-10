@@ -44,7 +44,15 @@ agentic = [
     "sqlglot>=24.0",           # AG-5 Concierge SQL guard: parse + allow-list generated SQL
     "opentelemetry-api>=1.25", # agent tracing
     "opentelemetry-sdk>=1.25",
-    "streamlit>=1.37",         # Agent UI: chat + approval queue + scenario comparison pages
+]
+
+# Phase 11 Agent UI (AG-UI-1..4): the web form of the dashboard this repo's
+# CLI (`fry14 agent-demo`) also renders as text. Split from `agentic` above
+# because it only needs Streamlit, not the LLM/graph/tracing stack those
+# other phases call for — this UI drives the same real engines through
+# ScriptedLlmClient, same as the CLI demo.
+ui = [
+    "streamlit>=1.37",
 ]
 
 [project.scripts]

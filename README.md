@@ -20,6 +20,8 @@ See the design docs for full context:
 - [`02-design-document.md`](02-design-document.md) — component/data/interface design
 - [`03-implementation-plan.md`](03-implementation-plan.md) — phased delivery plan
 - [`RUNBOOK.md`](RUNBOOK.md) — how to run it, interpret output, troubleshoot, and reconstruct a run from its audit log
+- [`MODEL_INVENTORY.md`](MODEL_INVENTORY.md) — SR 11-7-aligned entry: purpose, limitations, controls, evaluation results
+- [`REDTEAM.md`](REDTEAM.md) — the Phase 12 red-team session log (prompt injection, permission escalation, PII, estimation attempts)
 
 ## Agentic layer roster
 
@@ -170,12 +172,25 @@ src/fry14_engine/
                                   dates/quarter-labels/regulation-names allowlist) — either failure
                                   mode sets grounding_status=FAILED and blocks release
     store.py                     persist/read back agent_governance.grounded_narrative
-  evaluation/              Evaluation harness: golden-set scenario/triage/grounding/guardrail tests (Phase 12, C30)
+  evaluation/              Evaluation Harness (Phase 12, C30 — done)
+    models.py                  EvalCase, EvalCaseResult, EvalSetResult (pass_rate/meets_bar)
+    scenario_translation.py      RuleBasedScenarioTranslator (illustrative, not a model) +
+                                  50 golden NL->expected-draft/clarification cases
+    triage.py                      RuleBasedTriageTranslator (illustrative) + 18 golden
+                                    quarantine-cluster-with-known-root-cause cases
+    grounding_eval.py                 golden narrative fixtures scored against the real GroundingChecker
+    guardrails.py                      6 attack attempts run against the real PEP/PII Egress
+                                        Guard/Approval Queue
+    prompt_injection.py                  instruction-like text in a free-text field -> real AG-1
+                                          pipeline -> tool-call sequence diffed vs. a clean baseline
   api/                     FastAPI surface (sandbox, catalog, ingestion endpoints)
   db.py                    DuckDB bootstrap — applies schemas/*.sql
   demo.py                  `fry14 demo` — runs the real v1.0 pipeline end-to-end, prints a report
   agent_demo.py            `fry14 agent-demo` — runs all 5 agents end-to-end (the "Agent UI"
                            deliverable's CLI form — see its own module docstring), prints a report
+  ui/                      `fry14 ui` — the Agent UI deliverable's Streamlit form (`ui` extra)
+    app.py                     sidebar triggers run_agent_demo(); one tab per agent; a live
+                                Approval Queue tab (real ApprovalQueueService) + Agent Trace tab
   cli.py                   `fry14` command-line entry point
 
 schemas/            versioned DDL per logical zone: landing, quarantine, governed,
@@ -201,13 +216,18 @@ source .venv/Scripts/activate   # Windows Git Bash; use .venv/bin/activate on ma
 pip install -e ".[dev]"
 ```
 
-The `agentic` extra (`pip install -e ".[agentic]"`) adds the Phase 9+ dependencies
-(LangGraph, MCP SDK, Anthropic client, sqlglot, OpenTelemetry, Streamlit) — **still not
-installed or exercised in this repo as of Phase 11**, by deliberate, repeatedly-documented
-choice: the Agent Runtime is plain Python (no graph framework needed), `LlmClient` stays a
-`Protocol` with zero concrete implementations in `src/` (a real model client needs API
-credentials this environment doesn't have), and the "Agent UI" is a CLI report rather than a
-Streamlit/FastAPI app. Install it only once an actual model integration or web UI is in scope.
+The `agentic` extra (`pip install -e ".[agentic]"`) adds LangGraph, the MCP SDK, the
+Anthropic client, sqlglot, and OpenTelemetry — **still not installed or exercised in this
+repo as of Phase 12**, by deliberate, repeatedly-documented choice: the Agent Runtime is
+plain Python (no graph framework needed), and `LlmClient` stays a `Protocol` with zero
+concrete implementations in `src/` (a real model client needs API credentials this
+environment doesn't have). Install it only once an actual model integration is in scope.
+
+The separate `ui` extra (`pip install -e ".[ui]"`) adds **only** Streamlit — **this one is
+installed and exercised**: `fry14 ui` launches a real dashboard
+(`src/fry14_engine/ui/app.py`) over the same agents/tools/policy stack the CLI demo drives.
+It was split out from `agentic` specifically because it needs none of the LLM/graph/tracing
+dependencies above — same `ScriptedLlmClient`, same real engines underneath.
 
 ## Bootstrap the local database
 
@@ -263,6 +283,18 @@ itself is scripted (fixed, labeled-illustrative responses — no model
 credentials are wired into this repo); every number comes from the real
 deterministic engines. Options: `--count`, `--seed`, `--db-path` (defaults
 to `data/agent_demo.duckdb`).
+
+```bash
+pip install -e ".[ui]"   # once — adds Streamlit only
+fry14 ui
+```
+
+Launches the same agentic stack as a Streamlit dashboard
+(`src/fry14_engine/ui/app.py`): a sidebar to trigger a fresh
+`run_agent_demo()`, a conversational-workspace overview, one tab per
+agent, a live **Approval Queue** tab (approve/reject buttons call the
+real `ApprovalQueueService` — decisions here are governed, not UI-only
+state), and an **Agent Trace** tab grouping every session's events.
 
 ```bash
 fry14 data-dictionary
@@ -495,22 +527,74 @@ This repo implements the **v2.0 (agentic)** spec. Of the full 12-phase plan
   existing architecture is structurally stronger (no injection surface to
   defend in the first place); a dedicated test confirms the concierge's
   answer is byte-identical to calling `QuerySandboxService` directly with
-  the same parameters. The **Agent UI** deliverable is `fry14 agent-demo`
-  — a documented CLI report (same precedent as Phase 6's "Operational
-  Dashboard") that runs all five agents back to back and prints the plan,
-  every tool call's outcome, the Approval Queue's pending state, and a
-  scenario comparison table; no web UI (Streamlit, FastAPI, etc.) has been
-  built, and the `agentic` extra pulling those dependencies in still isn't
-  installed. Its `ScriptedLlmClient` — fixed, labeled-illustrative
-  structured responses, not a real model call — is the only new "fake" in
-  this phase, and it lives in the demo module, not in `agent_runtime/`
-  itself (`LlmClient` stays a `Protocol` with zero concrete
+  the same parameters. The **Agent UI** deliverable has two forms: `fry14
+  agent-demo` is a documented CLI report (same precedent as Phase 6's
+  "Operational Dashboard"), and `fry14 ui` launches a real Streamlit
+  dashboard (`src/fry14_engine/ui/app.py`, the `ui` extra —
+  `pip install -e ".[ui]"`) over the same `run_agent_demo()` data, with
+  a conversational-workspace overview, one tab per agent (AG-UI-1/AG-UI-4:
+  the scenario comparison chart lives in the AG-3 tab), a live Approval
+  Queue tab whose approve/reject buttons call the real
+  `ApprovalQueueService` (AG-UI-3 — decisions made here are governed
+  decisions, not UI-only state), and an Agent Trace tab grouping every
+  session's events (AG-UI-2). Both forms share the same
+  `ScriptedLlmClient` — fixed, labeled-illustrative structured responses,
+  not a real model call — which lives in the demo module, not in
+  `agent_runtime/` itself (`LlmClient` stays a `Protocol` with zero concrete
   implementations in `src/`). 99%+ test coverage on every new module.
-- Phase 12 (evaluation/red-teaming) follows after Phase 11.
+- **Phase 12 complete (final phase)**: the Evaluation Harness (C30), a
+  red-team session, the model inventory entry, latency measurement, and
+  demo packaging. Five golden-set evaluation sets live in `evaluation/`
+  and run as part of the normal test suite — i.e. already wired into CI
+  (`.github/workflows/ci.yml`) as a release gate, with no new workflow
+  needed. Two sets (scenario translation, triage) score an illustrative
+  rule-based stand-in (no real `LlmClient` exists — see
+  `agent_runtime/models.py`'s scope note, unchanged since Phase 9) against
+  ≥50 and 18 golden cases respectively; honestly, scenario translation
+  scores **94%** against its 95% bar (3 deliberately out-of-vocabulary
+  phrasings a keyword parser can't handle) and triage scores 100%. The
+  harness does not force a pass — a worse-than-reality 100% across the
+  board would have been a red flag, not a win. The other three sets
+  (grounding, guardrails, prompt injection) exercise real, already-shipped
+  deterministic code and all clear 100%. See
+  [`MODEL_INVENTORY.md`](MODEL_INVENTORY.md) for the full SR 11-7-aligned
+  entry (purpose, limitations, controls, evaluation results — explicitly
+  scoped to "no concrete model exists yet; this documents the governance
+  framework a real one must pass through") and
+  [`REDTEAM.md`](REDTEAM.md) for the 11-attempt red-team log (prompt
+  injection via record fields, 5 permission-escalation vectors, 2 PII
+  paths, "just estimate a number") — **11/11 blocked**, each attempt a
+  runnable test, not a thought experiment. Illustrative latency (not
+  token cost — no real model is deployed to meter): a full
+  `fry14 agent-demo` run (all 5 agents, synthetic 24-record batch)
+  completes in ~1.8s wall-clock on a dev machine; per-agent-session spans
+  reconstructed from `agent_trace_event` timestamps range ~15–230ms.
+  These numbers reflect local SQLite-grade DuckDB overhead and
+  `ScriptedLlmClient`'s zero-latency responses, not a production model
+  call — recorded for completeness, not as an SLA. **Demo packaging**:
+  the architecture diagrams already exist (`docs/agentic_architecture.docx`,
+  `docs/traditional_architecture.docx`, created earlier in this project);
+  a 3–4 minute demo video is a human deliverable outside a coding agent's
+  capability (no audio/video recording tool available) and is explicitly
+  **not** produced here — `fry14 agent-demo`'s own printed report is the
+  closest in-repo substitute for what that video would show. A real
+  Streamlit Agent UI (`fry14_engine/ui/app.py`, `fry14 ui`) was found
+  already built in the working tree during this phase — see the
+  "Agentic layer roster" / "See it run" sections above for what it does;
+  one genuine bug was caught integrating it into this suite: its
+  top-level `main()` call was unconditional, so merely *importing* the
+  module (not running it) executed the whole app in Streamlit's bare
+  mode and corrupted global script-run state for any `AppTest`-based
+  test that ran afterward in the same process. Fixed with the standard
+  `if __name__ == "__main__":` guard — verified both `streamlit run`
+  and `AppTest` still exercise it correctly (a fresh `AppTest` run now
+  clicks "Run agent demo" and checks every tab populates; ~88% coverage
+  on `ui/app.py`). CI (`.github/workflows/ci.yml`) now installs the `ui`
+  extra alongside `dev` so this runs in CI too, not just locally.
 
-None of the remaining agentic-layer code (`evaluation/`) is implemented
-yet — it's currently an empty placeholder package, same as `contracts/`,
-`pii/`, `rbac/`, etc. were before Phase 2.
+None of the agentic-layer code from the implementation plan remains
+unimplemented as placeholder packages — `evaluation/` is now real, closing
+out all 12 phases.
 
 **Deferred from Phase 3 (explicitly, per the implementation plan's own
 "optional/stretch" framing):** the Re-identification Vault (C8). Its DDL
