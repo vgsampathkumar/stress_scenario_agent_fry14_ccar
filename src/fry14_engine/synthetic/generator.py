@@ -120,3 +120,47 @@ def generate_loan_records(
             record = spec.apply(record, rng)
         records.append(record)
     return records
+
+
+def generate_schema_change_drops_credit_score_batch(
+    count: int, source_system_of_record: str, seed: int | None = None, start_index: int = 0
+) -> list[dict]:
+    """A labeled root-cause fixture for AG-2 (Phase 10): simulates one
+    source feed's schema change dropping `credit_score` entirely — every
+    record in this batch shares the same `source_system_of_record` and is
+    missing `credit_score`, so a correct triage attributes 100% of the
+    `MISSING_CREDIT_SCORE` cluster to that one source system. Unlike
+    `BAD_RECORD_SPECS.MISSING_CREDIT_SCORE` (cycled uniformly across a
+    mixed batch), this ties the defect to a specific, attributable
+    dimension so root-cause identification has a deterministic ground
+    truth to check against."""
+    rng = random.Random(seed)
+    fake = Faker()
+    fake.seed_instance(seed)
+    records = []
+    for offset in range(count):
+        record = _one_good_record(fake, rng, start_index + offset)
+        record["source_system_of_record"] = source_system_of_record
+        record["credit_score"] = None
+        records.append(record)
+    return records
+
+
+def generate_negative_balance_entity_batch(
+    count: int, counterparty_id: str, seed: int | None = None, start_index: int = 0
+) -> list[dict]:
+    """A labeled root-cause fixture for AG-2 (Phase 10): simulates one
+    counterparty's feed sending negative balances — every record in this
+    batch shares the same `counterparty_id` and has a negated
+    `outstanding_balance`, so a correct triage attributes 100% of the
+    `NEGATIVE_BALANCE` cluster to that one counterparty."""
+    rng = random.Random(seed)
+    fake = Faker()
+    fake.seed_instance(seed)
+    records = []
+    for offset in range(count):
+        record = _one_good_record(fake, rng, start_index + offset)
+        record["counterparty_id"] = counterparty_id
+        record["outstanding_balance"] = -abs(record["outstanding_balance"])
+        records.append(record)
+    return records

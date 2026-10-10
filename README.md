@@ -58,9 +58,15 @@ src/fry14_engine/
     validation_gateway.py    hashes PII (regardless of pass/fail), then routes: valid -> governed, invalid -> quarantine
     data_dictionary.py        generates a Markdown field reference straight from a DataContract (Phase 7)
   quarantine/        quarantine record model + append-only store (Phase 2 — done)
+    store.py               write + read_all/read_by_id/read_open_by_reason_code/
+                            update_remediation_status (read side + status updates: Phase 10)
+    summary.py               build_quarantine_summary: get_quarantine_summary's clustering
+                              (reason_code x source_system x rejection day, null-field rates,
+                              capped samples) — pure, DB-free (Phase 10, C19's deterministic tool)
   pii/                PII hashing + governed record model/store (Phase 3 — done)
     hashing_service.py     HMAC-SHA256, keyed via env var or explicit key; normalizes before hashing
-    governed_models.py      GovernedLoanRecord (nullability mirrors what the contract actually guarantees)
+    governed_models.py      GovernedLoanRecord (nullability mirrors what the contract actually
+                             guarantees; original_quarantine_id added Phase 10 for reprocessing lineage)
     governed_store.py        append-only writer into governed.loan_record
   reference_data/     versioned CCF / risk-weight tables, seeded like rbac.role (Phase 4 — done)
     models.py              RegulatoryParameterSet (in-memory, loaded once — mirrors DataContract)
@@ -122,16 +128,30 @@ src/fry14_engine/
     pep.py                          PolicyEnforcementPoint.decide(): agent-allowlist -> RBAC ->
                                      condition escalation -> session-limit -> autonomy ->
                                      always logs a POLICY_DECISION trace event
-  mcp_server/              MCP Tool Server (Phase 9, C23 — done; see its own module docstring
-                           for the 4 catalog tools deliberately deferred to Phase 10+)
+  mcp_server/              MCP Tool Server (Phase 9-10, C23 — done)
     models.py                  ToolContext (agent/role/session identity), ToolCallResult
     server.py                    McpToolServer: thin, policy-gated, trace-logged wrappers over
-                                  10 of the 13 §3.3 tools (ingest/validate/calculate/aggregate/
-                                  publish/build+run_stress_scenario/query_sandbox/catalog/lineage)
+                                  13 of 13 §3.3 tools (ingest/validate/calculate/aggregate/
+                                  publish/build+run_stress_scenario/query_sandbox/catalog/lineage/
+                                  get_quarantine_summary/propose_remediation/propose_contract_change —
+                                  apply_remediation has none at all: HUMAN_ONLY, never agent-callable)
   pii_egress/              PII Egress Guard (Phase 9, C31 — done)
     guard.py                  PiiEgressGuard: recursive SSN/EIN pattern scan over any JSON-like
                                payload; fail-closed (blocks, never redacts-and-continues)
-  agent_runtime/           Agent Runtime: supervisor/specialist graph, checkpointing (Phase 10, C17)
+  agent_runtime/           Agent Runtime (C17), AG-1 (C18) and AG-2 (C19) (Phase 10 — done)
+    models.py                  SessionStatus, AgentSession, RunLimits, LlmClient Protocol
+                                (no concrete implementation in src/ — see its own scope note)
+    store.py                     persists/reads checkpointed AgentSession state
+    runtime.py                     AgentRuntime: start/record_step/record_tool_call/record_tokens
+                                    (each hard-limited), complete_structured (one retry, then
+                                    escalate), await_confirmation/resume, finish
+    ag1_pipeline_operations.py       PipelineOperationsAgent: the fixed ingest->validate->
+                                     calculate->aggregate->check_thresholds->publish->report
+                                     plan, entirely through McpToolServer -> RunReport
+    ag2_data_quality_triage.py        DataQualityTriageAgent: get_quarantine_summary -> LLM
+                                      root-cause hypotheses (structured, cited) -> AgentProposal
+                                      -> (after approval) reprocess_after_approval, carrying
+                                      original_quarantine_id lineage into the new governed rows
   grounding/               Numeric Grounding Checker: binds narrative figures to tool-output fields (Phase 11, C29)
   evaluation/              Evaluation harness: golden-set scenario/triage/grounding/guardrail tests (Phase 12, C30)
   api/                     FastAPI surface (sandbox, catalog, ingestion endpoints)
@@ -363,12 +383,55 @@ This repo implements the **v2.0 (agentic)** spec. Of the full 12-phase plan
   field knowledge a general-purpose, contract-agnostic guard shouldn't
   have. 100% test coverage on all five new packages (`agent_trace`,
   `policy`, `approval_queue`, `mcp_server`, `pii_egress`).
-- Phases 10–12 (agent runtime + AG-1/AG-2, AG-3/AG-4/AG-5 + UI,
-  evaluation/red-teaming) follow in sequence after Phase 9.
+- **Phase 10 complete**: the Agent Runtime (C17) and the first two live
+  agents, AG-1 Pipeline Operations (C18) and AG-2 Data Quality Triage
+  (C19). The runtime is a plain, dependency-free Python state machine, not
+  a specific graph framework — the design doc's own "Technology
+  Considerations" lists that as non-binding, and the `agentic` extra is
+  still not installed. It checkpoints session state after every step/tool
+  call, enforces hard per-session limits (steps/tool calls/tokens, each
+  ending the session with `LIMIT_REACHED`), and validates structured LLM
+  output against a Pydantic schema with exactly one retry before
+  escalating `StructuredOutputInvalidError`. `LlmClient` is a `Protocol`
+  only — no concrete implementation (real or fake) lives in `src/`; a
+  production client wrapping a real model is deferred until API
+  credentials are actually in scope, same documented boundary as the
+  `agentic` extra itself. AG-1's plan is fixed by the design doc itself
+  ("ingest -> validate -> calculate -> aggregate -> check thresholds ->
+  publish -> report"), so it's deterministic orchestration (the same shape
+  as Phase 7's `Orchestrator`) routed entirely through the policy-enforced
+  MCP tools — no live model call. It reports (never raises on) a
+  `publish` permission denial, since `on_behalf_of` holding `RUN_PIPELINE`
+  without `PUBLISH_DATA_PRODUCT` is separation-of-duties by design, not a
+  bug — verified by a dedicated test. AG-2 calls the new
+  `get_quarantine_summary` tool (clusters by reason code x source system x
+  rejection day, with null-field rates and ≤20 capped sample ids — scoped
+  down from the design doc's "source entity" dimension, which
+  `quarantine.quarantine_record` has never actually captured), has the
+  LLM form cited root-cause hypotheses over those clusters, and turns each
+  into an `AgentProposal` (`REMEDIATION_RULE`/`CONTRACT_AMENDMENT`/
+  `SOURCE_TICKET`) — it never edits data itself.
+  `reprocess_after_approval` is gated on `proposal.status == APPROVED`,
+  checked in code, not trusted from the caller (verified by a test that
+  the un-approved path raises `NoDataChangeWithoutApprovalError` and
+  changes zero rows); once approved, it corrects the quarantined field,
+  re-validates against the real contract, and writes a new
+  `GovernedLoanRecord` carrying the new `original_quarantine_id` lineage
+  column — a genuine bug was caught here by a test, not inspection: the
+  quarantined `outstanding_balance` is a JSON-serialized *string* (from
+  `model_dump(mode="json")` at quarantine time), so `abs()` on it directly
+  raised `TypeError`; fixed by parsing through `Decimal` first. The
+  synthetic generator gained two labeled, attributable root-cause fixtures
+  (`generate_schema_change_drops_credit_score_batch`,
+  `generate_negative_balance_entity_batch`) so a correct triage has a
+  deterministic ground truth to check against, not just a uniformly-cycled
+  mix of defects. 99%+ test coverage on every new/touched module.
+- Phases 11–12 (AG-3/AG-4/AG-5 + UI, evaluation/red-teaming) follow in
+  sequence after Phase 10.
 
-None of the remaining agentic-layer code (`agent_runtime/`, `grounding/`,
-`evaluation/`) is implemented yet — those are currently empty placeholder
-packages, same as `contracts/`, `pii/`, `rbac/`, etc. were before Phase 2.
+None of the remaining agentic-layer code (`grounding/`, `evaluation/`) is
+implemented yet — those are currently empty placeholder packages, same as
+`contracts/`, `pii/`, `rbac/`, etc. were before Phase 2.
 
 **Deferred from Phase 3 (explicitly, per the implementation plan's own
 "optional/stretch" framing):** the Re-identification Vault (C8). Its DDL

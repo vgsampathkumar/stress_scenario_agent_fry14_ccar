@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from fry14_engine.synthetic.generator import generate_loan_records
+from fry14_engine.synthetic.generator import (
+    generate_loan_records,
+    generate_negative_balance_entity_batch,
+    generate_schema_change_drops_credit_score_batch,
+)
 
 
 def test_generates_requested_count():
@@ -47,3 +51,22 @@ def test_same_seed_is_reproducible():
 def test_rejects_out_of_range_bad_record_rate():
     with pytest.raises(ValueError):
         generate_loan_records(count=5, bad_record_rate=1.5)
+
+
+def test_schema_change_batch_is_entirely_attributable_to_one_source_system():
+    records = generate_schema_change_drops_credit_score_batch(
+        count=8, source_system_of_record="LEGACY_CORE", seed=10
+    )
+    assert len(records) == 8
+    assert all(r["credit_score"] is None for r in records)
+    assert all(r["source_system_of_record"] == "LEGACY_CORE" for r in records)
+    # Every other field stays realistic/non-null, isolating the one defect.
+    assert all(r["outstanding_balance"] >= 0 for r in records)
+
+
+def test_negative_balance_batch_is_entirely_attributable_to_one_counterparty():
+    records = generate_negative_balance_entity_batch(count=6, counterparty_id="CP-99999", seed=11)
+    assert len(records) == 6
+    assert all(r["outstanding_balance"] < 0 for r in records)
+    assert all(r["counterparty_id"] == "CP-99999" for r in records)
+    assert all(r["credit_score"] is not None for r in records)

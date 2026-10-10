@@ -86,6 +86,9 @@ class ApprovalQueueService:
             proposal_id, approver_user_id, approver_role, ProposalStatus.REJECTED, reason
         )
 
+    def read(self, proposal_id: str) -> AgentProposal | None:
+        return self._store.read(proposal_id)
+
     def read_pending(self) -> list[AgentProposal]:
         return self._store.read_pending()
 
